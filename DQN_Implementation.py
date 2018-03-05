@@ -2,11 +2,34 @@
 from __future__ import absolute_import, division, print_function
 
 import pyglet
+from gym.envs.classic_control import rendering # Have to impor this before tensorflow
 import tensorflow as tf
 import numpy as np
-import gym, sys, copy, argparse, time
+import gym, sys, copy, argparse, time, os
 
 
+class ConvQNetwork(object):
+
+    # This class essentially defines the network architecture. 
+    # The network should take in state of the world as an input, 
+    # and output Q values of the actions available to the agent as the output. 
+
+    def __init__(self, environment, alpha=0.001, gamma=1):
+        # Define your network architecture here. It is also a good idea to define any training operations 
+        # and optimizers here, initialize your variables, or alternately compile your model here.  
+        pass
+    
+    def save_model_weights(self, suffix):
+        # Helper function to save your model / weights. 
+        pass
+
+    def load_model(self, model_file):
+        # Helper function to load an existing model.
+        pass
+
+    def load_model_weights(self,weight_file):
+        # Helper funciton to load model weights. 
+        pass
 
 class QNetwork(object):
 
@@ -34,7 +57,7 @@ class QNetwork(object):
         
 class LinearQ(object):
     
-    def __init__(self, environment, sess, alpha=0.0001, filepath='tmp/linearq'):
+    def __init__(self, environment, sess, alpha=0.0001, filepath='tmp/linearq/'):
         # Model parameters:
         self.sess = sess # the tensorflow session
         env = environment
@@ -44,7 +67,7 @@ class LinearQ(object):
         self.filepath = filepath
         
         # Set a random seed
-        tf.set_random_seed(13)
+        # tf.set_random_seed(2) # MountainCar
         
         # Linear network architecture
         with tf.name_scope("InputSpace"):
@@ -54,20 +77,25 @@ class LinearQ(object):
         with tf.name_scope("Parameters"):
             self.w = tf.get_variable('Weights', shape=[self.features,1], initializer=tf.random_normal_initializer(stddev=2.0))
             self.b = tf.get_variable('Bias', shape=[1,], initializer=tf.initializers.zeros())
+            # self.w = tf.Variable(np.array([[29.06],[29.04],[29.061],[-2.234],[-1.6327],[2.0925]]), dtype=tf.float32, name='Weights')
+            # self.b = tf.Variable(np.array([[-92.8027]]), dtype=tf.float32, name='Bias')
         with tf.name_scope("Q_Val_Est"):
             self.q_values = tf.matmul(self.x, self.w) + self.b
         with tf.name_scope("Loss"):
             regularizer = tf.nn.l2_loss(self.w)
             self.loss = tf.losses.mean_squared_error(self.q_values, self.q_target) + 0.01*regularizer
+            self.loss_sum = tf.summary.scalar("Loss", self.loss)
         with tf.name_scope("Optimize"):
-            self.opt = tf.train.GradientDescentOptimizer(alpha).minimize(self.loss)  #Change this to Adam later
-        
+            self.global_step = tf.Variable(0, trainable=False, name='global_step')
+            self.opt = tf.train.GradientDescentOptimizer(alpha).minimize(self.loss, global_step=self.global_step)  #Change this to Adam later
+
+        self.saver = tf.train.Saver(max_to_keep=10)
         self._reset()
     
     def _reset(self):
         # Initialize the weights
         self.sess.run(tf.global_variables_initializer())
-        self.writer = tf.summary.FileWriter('tmp/linearq', self.sess.graph)
+        self.writer = tf.summary.FileWriter(self.filepath+'events/', self.sess.graph)
         
     def infer(self, features):
         feed_dict = {self.x: features}
@@ -76,42 +104,44 @@ class LinearQ(object):
 
     def update(self, features, q_target):
         feed_dict = {self.x: features, self.q_target: q_target}
-        _, loss, w = self.sess.run([self.opt, self.loss, self.w], feed_dict=feed_dict)
-        return loss, w
+        _, summary, w = self.sess.run([self.opt, self.loss_sum, self.w], feed_dict=feed_dict)
+        return summary, w
     
-    def _getFeatures(self, S, a):
-        # Create feature vector
-        # Feature vector is a combination of the inputs and selected action
-        # May need to make feature vector specific to the environment?
-        # Could use feature crossing from TF
+    def getFeatures(self, S):
+        # Create a simple feature vector that is a combination of actions and state info
+        # Creates a (#actions, feature_size) matrix
         S = np.atleast_2d(S).T # Column vector
-        A = np.zeros((self.nA, 1)) # Action is zero-index, create one hot vector
-        A[a] = 1
-        # Create a feature vector from the actions and state info
-        features = np.zeros((self.features, 1))
-        features = (np.dot(S, A.T)).reshape((features.shape[0],1))
-    
-        return features.T
+        features = np.zeros((self.nA, self.features))
+        for i in range(self.nA):
+            A = np.zeros((self.nA, 1)) # Action is zero-index, create one hot vector
+            A[i] = 1
+            features[i,:] = (np.dot(S, A.T)).reshape((-1,)) # Create a feature vector from the actions and state info
+        return features
     
     def save_model_weights(self):
-        saver = tf.train.Saver()
-        saver.save(self.sess, self.filepath + 'model.ckpt')
-    
+        self.saver.save(self.sess, self.filepath + 'checkpoints/model.ckpt', global_step=tf.train.global_step(self.sess, self.global_step))
+        
     def load_model(self, model_file):
         # saver = tf.train.import_meta_graph(model_file + '.meta')
         # saver.restore(sess, model_file)
         pass
     
     def load_model_weights(self, weight_file=''):
-        # Helper funciton to load model weights. 
+        # Helper funciton to load model weights.
         if weight_file == '':
-            filename = self.filepath + 'model.ckpt'
-            saver.restore(self.sess, filename)
+            filename = self.filepath+'checkpoints/'
         else:
-            filename = self.filepath + weight_file
-            saver.restore(self.sess, filename)
+            filename = self.filepath + 'checkpoints/' + weight_file
+        
+        latest_ckpt = tf.train.latest_checkpoint(filename)
+        if latest_ckpt:
+            self.saver.restore(self.sess, latest_ckpt)
+        else:
+            print('No weight file to load, starting from scratch')
+            return -1
+        
         self.writer = tf.summary.FileWriter('tmp/linearq', self.sess.graph)
-        print('Loaded weights from {}'.format(filename))
+        print('Loaded weights from {}'.format(latest_ckpt))
                 
 
 class Replay_Memory(object):
@@ -135,18 +165,24 @@ class Replay_Memory(object):
         # Appends transition to the memory.     
         pass
 
-class DQN_Agent(object):
+class Queue(object):
+    def __init__(self):
+        self.items = []
 
-    # In this class, we will implement functions to do the following. 
-    # (1) Create an instance of the Q Network class.
-    # (2) Create a function that constructs a policy from the Q values predicted by the Q Network. 
-    #        (a) Epsilon Greedy Policy.
-    #         (b) Greedy Policy. 
-    # (3) Create a function to train the Q Network, by interacting with the environment.
-    # (4) Create a function to test the Q Network's performance on the environment.
-    # (5) Create a function for Experience Replay.
+    def enqueue(self, item):
+        self.items.insert(0,item)
+
+    def dequeue(self):
+        return self.items.pop()
+
+    def size(self):
+        return len(self.items)
+        
+        
+
+class DQN_Agent(object):
     
-    def __init__(self, environment, sess, network_type, epsilon=0.7, gamma =1.0, render=False):
+    def __init__(self, environment, sess, network_type, render=False, gamma=1., filepath='tmp/'):
 
         # Create an instance of the network itself, as well as the memory. 
         # Here is also a good place to set environmental parameters,
@@ -154,70 +190,118 @@ class DQN_Agent(object):
         self.env = environment
         self.nA = self.env.action_space.n
         self.render = render
-        self.epsilon = epsilon
         self.gamma = gamma
+        # Initialize the memory for experience replay
                 
         if network_type == 'Linear':
-            self.net = LinearQ(environment, sess=sess)
+            self.net = LinearQ(environment, sess=sess, filepath=filepath)
         elif network_type == 'DNN':
-            self.net = DeepQ(environment)
+            self.net = QNetwork(environment, sess=sess, filepath=filepath)
+        elif network_type == 'DCNN':
+            self.net = ConvQNetwork(environment, sess=sess, filepath=filepath)
         else:
             raise ValueError
-        
-    def epsilon_greedy_policy(self, q_values):
-        # Creating epsilon greedy probabilities to sample from.
-        max_a = np.argmax(q_values)
-        if np.random.sample() > self.epsilon:
-            return max_a
-        else:
-            actions = [x for x in range(self.nA)]
-            return np.random.choice(actions)
 
     def greedy_policy(self, q_values):
         # Creating greedy policy for test time. 
         return np.argmax(q_values)
 
-    def train(self, episodes=1e3):
-        # In this function, we will train our network. 
-        # If training without experience replay_memory, then you will interact with the environment 
-        # in this function, while also updating your network parameters. 
+    def train(self, episodes=1e3, epsilon=0.7, replay=False, check_rate=1e4):
+        # Interact with the environment and update the model parameters
+        # If using experience replay then update the model with a sampled minibatch
+        
+        if replay: # If using experience replay, need to burn in a set of transitions
+            self.burn_in_memory()
+            batch = 32
             
-        S = self.env.reset()
-        cur_eps = 0
         iters = 0
-        while cur_eps < episodes:
-            q_values = np.zeros((self.nA, 1))
-            for i in range(self.nA):
-                feature_vect = self.simpleFeatures(S,i)
-                q_values[i] = self.net.infer(feature_vect)
-            
-            action = self.epsilon_greedy_policy(q_values)
-            action_features = self.simpleFeatures(S,action) #need for gradient update
+        test_reward = 0
+        # reward_summary = tf.Summary()
+        for ep in range(int(episodes)):
+            S = self.env.reset()
+            done = False
+            while not done:
+                features = self.net.getFeatures(S)
+                # Epsilon greedy training policy
+                if np.random.sample() < epsilon:
+                    action = np.random.choice(self.nA)
+                else:
+                    q_vals = self.net.infer(features)
+                    action = np.argmax(q_vals)
+                # Execute selected action
+                S_next, R, done,_ = self.env.step(action) #DEBUG REMOVE!!!
+                if not replay:
+                    if done:
+                        q_target = np.array([[R]])
+                    else:
+                        feature_next = self.net.getFeatures(S_next)
+                        q_vals_next = self.net.infer(feature_next)
+                        q_target = np.array([[self.gamma*np.max(q_vals_next) + R]])
+                        
+                    summary,_ = self.net.update(features[None,action,:], q_target) # Update the model parameters
+                    self.net.writer.add_summary(summary, tf.train.global_step(self.net.sess, self.net.global_step))
+                else:
+                    # Update the gradient with experience replay
+                    feature_cur = features[action,:]
+                    # Store the tuple (feature_cur, action, R, done, feature_next)
+                    # Ranomly select a batch of tuples from memory
+                    # for all the tuples where done is true: set the y val as R
+                    # for the remainder: set y val as R + q_max_next
+                    # Update the gradients with the batch
+                
+                S = S_next # Update the state info
+                epsilon -= 4.5e-7 # Reduce epsilon as policy learns
+                
+                if iters % check_rate == 0:
+                    # Test the model performance
+                    test_reward = self.test(episodes=20, epsilon=0.05) # Run a test to check the performance of the model
+                    print('Reward: {}, Step: {}'.format(test_reward, tf.train.global_step(self.net.sess, self.net.global_step)))
+                    reward_summary = tf.Summary(value=[tf.Summary.Value(tag='test_reward', simple_value=test_reward)])
+                    self.net.writer.add_summary(reward_summary, tf.train.global_step(self.net.sess, self.net.global_step))
+                    done = True
+                iters += 1
 
-            S, R, done,_ = self.env.step(action) # Run the simulation one step forward
-
-            if done:
-                q_target = np.array([[R]])
-            else:
-                # TODO Remove this duplicated effort, was copied over from a previous script
-                for i in range(self.nA):
-                    feature_vect = self.simpleFeatures(S,i)
-                    q_values[i] = self.net.infer(feature_vect)
-                best_act = np.argmax(q_values)
-                q_target = np.array([self.gamma*q_values[best_act] + R])
-
-            loss, weights = self.net.update(action_features, q_target) # Update the model parameters
-            
-            iters += 1
-            if done:
-                S = self.env.reset()
-                cur_eps += 1
-                if cur_eps % 100 == 0:
-                    print(loss)
-                    print(weights)
-                    print('{} episodes complete, {} iterations'.format(cur_eps, iters))
-                    
-            self.epsilon -= 4.5e-6
+            if ep % 100 == 0:
+                print("episode {} complete, epsilon={}".format(ep, epsilon))
+                print(self.net.sess.run([self.net.w, self.net.b]))
+            if ep % 2000 == 0:
+                self.net.save_model_weights()
+        
+        # cur_eps = 0
+        # iters = 0
+        # while cur_eps < episodes:
+        #     q_values = np.zeros((self.nA, 1))
+        #     for i in range(self.nA):
+        #         feature_vect = self.simpleFeatures(S,i)
+        #         q_values[i] = self.net.infer(feature_vect)
+        # 
+        #     action = self.epsilon_greedy_policy(q_values)
+        #     action_features = self.simpleFeatures(S,action) #need for gradient update
+        # 
+        #     S, R, done,_ = self.env.step(action) # Run the simulation one step forward
+        # 
+        #     if done:
+        #         q_target = np.array([[R]])
+        #     else:
+        #         # TODO Remove this duplicated effort, was copied over from a previous script
+        #         for i in range(self.nA):
+        #             feature_vect = self.simpleFeatures(S,i)
+        #             q_values[i] = self.net.infer(feature_vect)
+        #         best_act = np.argmax(q_values)
+        #         q_target = np.array([self.gamma*q_values[best_act] + R])
+        # 
+        #     loss, weights = self.net.update(action_features, q_target) # Update the model parameters
+        # 
+        #     iters += 1
+        #     if done:
+        #         S = self.env.reset()
+        #         cur_eps += 1
+        #         if cur_eps % 100 == 0:
+        #             print(loss)
+        #             print(weights)
+        #             print('{} episodes complete, {} iterations'.format(cur_eps, iters))
+        # 
+        #     self.epsilon -= 4.5e-6
             
             # Need to record the data for plots
             
@@ -225,52 +309,42 @@ class DQN_Agent(object):
         # If you are using a replay memory, you should interact with environment here, and store these 
         # transitions to memory, while also updating your model.
 
-    def test(self, model_file=None, episodes=100):
+    def test(self, model_file=None, episodes=100, epsilon=0.0):
         # Evaluate the performance of your agent over 100 episodes, by calculating cummulative rewards for the 100 episodes.
-        # Here you need to interact with the environment, irrespective of whether you are using a memory. 
-        
-        cur_eps = 0
-        S = self.env.reset()
-        run_reward = 0
         total_reward = 0
-        while cur_eps < episodes:
-            q_values = np.zeros((self.nA, 1))
-            for i in range(self.nA):
-                # Evaluate the q values for each action at the current state
-                feature_vect = self.simpleFeatures(S,i)
-                q_values[i] = self.net.infer(feature_vect)
-            
-            action = self.greedy_policy(q_values) #Select an actions based on the epsilon greedy policy
-            S, R, done,_ = self.env.step(action) # Take the next step
-            run_reward += R        
-            if done:
-                S = self.env.reset()
-                cur_eps += 1
-                total_reward += run_reward 
-                run_reward = 0
+        for ep in range(int(episodes)):
+            episode_reward = 0
+            S = self.env.reset()
             if self.render:
                 self.env.render()
+            done = False
+            while not done:
+                features = self.net.getFeatures(S)
+                # Epsilon greedy training policy
+                if np.random.sample() < epsilon:
+                    action = np.random.choice(self.nA)
+                else:
+                    q_vals = self.net.infer(features)
+                    action = np.argmax(q_vals)
+                # Execute selected action
+                S_next, R, done,_ = self.env.step(action)
+                episode_reward += R
+                if self.render:
+                    self.env.render()
+                S = S_next # Update the state
+            total_reward += episode_reward
         
-        total_reward = float(total_reward/episodes)
-        return total_reward
-
-    def simpleFeatures(self, S, a):
-        # Create a simple feature vector that is a combination of actions and state info
-        S = np.atleast_2d(S).T # Column vector
-        A = np.zeros((self.nA, 1)) # Action is zero-index, create one hot vector
-        A[a] = 1
-        # Create a feature vector from the actions and state info
-        features = (np.dot(S, A.T)).reshape((-1,1))
-        return features.T
+        average_reward = float(total_reward/episodes)
+        return average_reward
     
-    def burn_in_memory():
+    def burn_in_memory(self):
         # Initialize your replay memory with a burn_in number of episodes / transitions. 
         pass
-
+        
 
 def parse_arguments():
     parser = argparse.ArgumentParser(description='Deep Q Network Argument Parser')
-    parser.add_argument('--env',dest='env',type=str, default='MountainCar-v0')
+    parser.add_argument('--env',dest='env',type=str, default='CartPole-v0')
     parser.add_argument('--render',dest='render',type=int,default=0)
     parser.add_argument('--train',dest='train',type=int,default=1)
     parser.add_argument('--model',dest='model_file',type=str)
@@ -284,10 +358,10 @@ def main(args):
     network_type = args.network
 
     # Setting the session to allow growth, so it doesn't allocate all GPU memory. 
-    # gpu_ops = tf.GPUOptions(allow_growth=True)
-    # config = tf.ConfigProto(gpu_options=gpu_ops)
-    # sess = tf.Session(config=config)
-    sess = tf.Session()
+    gpu_ops = tf.GPUOptions(allow_growth=True)
+    config = tf.ConfigProto(gpu_options=gpu_ops)
+    sess = tf.Session(config=config)
+    # sess = tf.Session()
 
     # You want to create an instance of the DQN_Agent class here, and then train / test it.
     env = gym.make(environment_name)
@@ -296,10 +370,13 @@ def main(args):
     
     # agent.net.save_model_weights('test_name')
     
-    agent.render = True
+    # agent.render = True
+    # print(sess.run(agent.net.w))
     for i in range(5):
         agent.train()
-        agent.test(episodes=4)
+        # print(sess.run(agent.net.w))
+        reward = agent.test(episodes=20)
+        print("Test reward: {}".format(reward))
     env.close()
     agent.net.save_model_weights()
     

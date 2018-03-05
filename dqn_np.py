@@ -114,21 +114,9 @@ class Replay_Memory(object):
         pass
 
 class DQN_Agent(object):
-
-    # In this class, we will implement functions to do the following. 
-    # (1) Create an instance of the Q Network class.
-    # (2) Create a function that constructs a policy from the Q values predicted by the Q Network. 
-    #        (a) Epsilon Greedy Policy.
-    #         (b) Greedy Policy. 
-    # (3) Create a function to train the Q Network, by interacting with the environment.
-    # (4) Create a function to test the Q Network's performance on the environment.
-    # (5) Create a function for Experience Replay.
     
     def __init__(self, environment, network_type, epsilon=0.7, render=False):
 
-        # Create an instance of the network itself, as well as the memory. 
-        # Here is also a good place to set environmental parameters,
-        # as well as training parameters - number of episodes / iterations, etc.
         self.env = environment
         self.nA = self.env.action_space.n
         self.render = render
