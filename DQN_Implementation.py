@@ -6,6 +6,7 @@ from gym.envs.classic_control import rendering # Have to impor this before tenso
 import tensorflow as tf
 import numpy as np
 import gym, sys, copy, argparse, time, os
+import random
 
 
 class ConvQNetwork(object):
@@ -37,9 +38,27 @@ class QNetwork(object):
     # The network should take in state of the world as an input, 
     # and output Q values of the actions available to the agent as the output. 
 
-    def __init__(self, environment, alpha=0.0001, gamma=1):
+    def __init__(self, environment, sess, alpha=0.0001, filepath='tmp/deepq/'):
         # Define your network architecture here. It is also a good idea to define any training operations 
         # and optimizers here, initialize your variables, or alternately compile your model here.  
+        
+        self.sess = sess
+        env = environment
+        
+        # Model will take in state
+        # Model will output the 
+        
+    def infer(self, features):
+        # Evaluate the data using the model
+        pass
+        
+    def update(self, features, q_target):
+        pass
+        
+    def getFeatures(self, S):
+        # Prepare the data for beiing fed into the model
+        
+        # Return the features as a (1, feature_size) vector
         pass
     
     def save_model_weights(self, suffix):
@@ -67,7 +86,7 @@ class LinearQ(object):
         self.filepath = filepath
         
         # Set a random seed
-        # tf.set_random_seed(2) # MountainCar
+        tf.set_random_seed(2) # MountainCar
         
         # Linear network architecture
         with tf.name_scope("InputSpace"):
@@ -88,6 +107,7 @@ class LinearQ(object):
         with tf.name_scope("Optimize"):
             self.global_step = tf.Variable(0, trainable=False, name='global_step')
             self.opt = tf.train.GradientDescentOptimizer(alpha).minimize(self.loss, global_step=self.global_step)  #Change this to Adam later
+            # self.opt = tf.train.AdamOptimizer(alpha).minimize(self.loss, global_step=self.global_step)
 
         self.saver = tf.train.Saver(max_to_keep=10)
         self._reset()
@@ -146,7 +166,7 @@ class LinearQ(object):
 
 class Replay_Memory(object):
 
-    def __init__(self, memory_size=50000, burn_in=10000):
+    def __init__(self, memory_size=50000):
 
         # The memory essentially stores transitions recorder from the agent
         # taking actions in the environment.
@@ -154,35 +174,57 @@ class Replay_Memory(object):
         # Burn in episodes define the number of episodes that are written into the memory from the 
         # randomly initialized agent. Memory size is the maximum size after which old elements in the memory are replaced. 
         # A simple (if not the most efficient) was to implement the memory is as a list of transitions. 
-        pass
+        self.memory = []
+        self.memory_size = memory_size
+        self.feature_shape = None
 
     def sample_batch(self, batch_size=32):
         # This function returns a batch of randomly sampled transitions - i.e. state, action, reward, next state, terminal flag tuples. 
         # You will feed this to your model to train.
-        pass
+        
+        # Return the data in matrix forms for easy feeding into networks
+        # Data should be in in form (batch, values)
+        if batch_size < 1 or batch_size >= self.size():
+            raise ValueError
+        
+        batch = random.sample(self.memory, batch_size)
+        batch_features = (batch_size,) + self.feature_shape
+        cur_features = np.zeros(batch_features)
+        actions = np.zeros((batch_size, 1))
+        rewards = np.zeros((batch_size, 1))
+        dones = np.zeros((batch_size, 1))
+        # next_features = np.zeros(batch_size, self.feature_shape)
+        next_features = [] # TODO bandaid for mntncar
+        
+        for i, ele in enumerate(batch):
+            cur_features[i,:] = ele[0]
+            actions[i,:] = ele[1]
+            rewards[i,:] = ele[2]
+            dones[i,:] = ele[3]
+            # next_features[i,:] = ele[4] # TODO bandaid for mntncar
+            next_features += (ele[4],)        
+        return (cur_features, actions, rewards, dones, next_features)
 
     def append(self, transition):
-        # Appends transition to the memory.     
-        pass
-
-class Queue(object):
-    def __init__(self):
-        self.items = []
-
-    def enqueue(self, item):
-        self.items.insert(0,item)
-
-    def dequeue(self):
-        return self.items.pop()
-
+        
+        if not self.feature_shape: #On the first entry record the shape of the features
+            self.feature_shape = transition[0].shape
+        
+        # Appends transition to the memory.
+        if self.size() >= self.memory_size:
+              self.memory.pop()
+        self.memory.insert(0,transition)
+        
+        if self.size() > self.memory_size:
+            print('Queue Overfilled')
+        
     def size(self):
-        return len(self.items)
-        
-        
+        return len(self.memory)
+                
 
 class DQN_Agent(object):
     
-    def __init__(self, environment, sess, network_type, render=False, gamma=1., filepath='tmp/'):
+    def __init__(self, environment, sess, network_type, render=False, gamma=1., alpha=0.001, filepath='tmp/'):
 
         # Create an instance of the network itself, as well as the memory. 
         # Here is also a good place to set environmental parameters,
@@ -194,11 +236,11 @@ class DQN_Agent(object):
         # Initialize the memory for experience replay
                 
         if network_type == 'Linear':
-            self.net = LinearQ(environment, sess=sess, filepath=filepath)
+            self.net = LinearQ(environment, sess=sess, filepath=filepath, alpha=alpha)
         elif network_type == 'DNN':
-            self.net = QNetwork(environment, sess=sess, filepath=filepath)
+            self.net = QNetwork(environment, sess=sess, filepath=filepath, alpha=alpha)
         elif network_type == 'DCNN':
-            self.net = ConvQNetwork(environment, sess=sess, filepath=filepath)
+            self.net = ConvQNetwork(environment, sess=sess, filepath=filepath, alpha=alpha)
         else:
             raise ValueError
 
@@ -206,13 +248,15 @@ class DQN_Agent(object):
         # Creating greedy policy for test time. 
         return np.argmax(q_values)
 
-    def train(self, episodes=1e3, epsilon=0.7, replay=False, check_rate=1e4):
+    def train(self, episodes=1e3, epsilon=0.7, decay_rate=4.5e-6, replay=False, check_rate=1e4):
         # Interact with the environment and update the model parameters
         # If using experience replay then update the model with a sampled minibatch
         
         if replay: # If using experience replay, need to burn in a set of transitions
-            self.burn_in_memory()
-            batch = 32
+            memory_queue = Replay_Memory()
+            self.burn_in_memory(memory_queue)
+            batch_size = 32
+            print('Memory Burned In')
             
         iters = 0
         test_reward = 0
@@ -229,7 +273,7 @@ class DQN_Agent(object):
                     q_vals = self.net.infer(features)
                     action = np.argmax(q_vals)
                 # Execute selected action
-                S_next, R, done,_ = self.env.step(action) #DEBUG REMOVE!!!
+                S_next, R, done,_ = self.env.step(action)
                 if not replay:
                     if done:
                         q_target = np.array([[R]])
@@ -243,14 +287,34 @@ class DQN_Agent(object):
                 else:
                     # Update the gradient with experience replay
                     feature_cur = features[action,:]
+                    feature_next = self.net.getFeatures(S_next)
+                    store = (feature_cur, action, R, done, feature_next)
                     # Store the tuple (feature_cur, action, R, done, feature_next)
+                    memory_queue.append(store)
+                    
                     # Ranomly select a batch of tuples from memory
-                    # for all the tuples where done is true: set the y val as R
-                    # for the remainder: set y val as R + q_max_next
+                    cur_features, actions, rewards, dones, next_features = memory_queue.sample_batch(batch_size=batch_size)
+                    
+                    # How do I handle the next features in a batch? for atari it's easier?
+                    #  Use a bandaid for now                    
+                    # For mountaincar and cartpole:
+                    # MntnCar the evale is going to take in 3 features and spit out a list of q_vals
+                    best_q = np.zeros((batch_size,1))
+                    for i, ele in enumerate(next_features):
+                        best_q[i,:] = np.max(self.net.infer(ele))
+                    
+                    # For atari:
+                    # Atari the evaluate is going to take in one feature and spit out a list of q_vals
+                                        
+                    done_mask = 1 - dones.astype(int) # Makes a mask of 0 where done is true, 1 otherwise
+                    q_target = best_q * done_mask + rewards # If done, target just reward, else target reward + best_q
+                    
                     # Update the gradients with the batch
+                    summary,_ = self.net.update(cur_features, q_target)
+                    self.net.writer.add_summary(summary, tf.train.global_step(self.net.sess, self.net.global_step))
                 
                 S = S_next # Update the state info
-                epsilon -= 4.5e-7 # Reduce epsilon as policy learns
+                epsilon -= decay_rate # Reduce epsilon as policy learns
                 
                 if iters % check_rate == 0:
                     # Test the model performance
@@ -266,48 +330,6 @@ class DQN_Agent(object):
                 print(self.net.sess.run([self.net.w, self.net.b]))
             if ep % 2000 == 0:
                 self.net.save_model_weights()
-        
-        # cur_eps = 0
-        # iters = 0
-        # while cur_eps < episodes:
-        #     q_values = np.zeros((self.nA, 1))
-        #     for i in range(self.nA):
-        #         feature_vect = self.simpleFeatures(S,i)
-        #         q_values[i] = self.net.infer(feature_vect)
-        # 
-        #     action = self.epsilon_greedy_policy(q_values)
-        #     action_features = self.simpleFeatures(S,action) #need for gradient update
-        # 
-        #     S, R, done,_ = self.env.step(action) # Run the simulation one step forward
-        # 
-        #     if done:
-        #         q_target = np.array([[R]])
-        #     else:
-        #         # TODO Remove this duplicated effort, was copied over from a previous script
-        #         for i in range(self.nA):
-        #             feature_vect = self.simpleFeatures(S,i)
-        #             q_values[i] = self.net.infer(feature_vect)
-        #         best_act = np.argmax(q_values)
-        #         q_target = np.array([self.gamma*q_values[best_act] + R])
-        # 
-        #     loss, weights = self.net.update(action_features, q_target) # Update the model parameters
-        # 
-        #     iters += 1
-        #     if done:
-        #         S = self.env.reset()
-        #         cur_eps += 1
-        #         if cur_eps % 100 == 0:
-        #             print(loss)
-        #             print(weights)
-        #             print('{} episodes complete, {} iterations'.format(cur_eps, iters))
-        # 
-        #     self.epsilon -= 4.5e-6
-            
-            # Need to record the data for plots
-            
-            
-        # If you are using a replay memory, you should interact with environment here, and store these 
-        # transitions to memory, while also updating your model.
 
     def test(self, model_file=None, episodes=100, epsilon=0.0):
         # Evaluate the performance of your agent over 100 episodes, by calculating cummulative rewards for the 100 episodes.
@@ -337,9 +359,30 @@ class DQN_Agent(object):
         average_reward = float(total_reward/episodes)
         return average_reward
     
-    def burn_in_memory(self):
+    def burn_in_memory(self, memory_queue, burn_in=10000):
         # Initialize your replay memory with a burn_in number of episodes / transitions. 
-        pass
+        i = 0
+        while True:
+            S = self.env.reset()
+            done = False
+            while not done:
+                if i >= burn_in:
+                    return
+                features = self.net.getFeatures(S)
+                # Epsilon greedy training policy
+                if np.random.sample() < 0.5: # Add some stochasticity to the burn in
+                    action = np.random.choice(self.nA)
+                else:
+                    q_vals = self.net.infer(features)
+                    action = np.argmax(q_vals)
+                # Execute selected action
+                S_next, R, done,_ = self.env.step(action)
+                feature_cur = features[action,:]
+                feature_next = self.net.getFeatures(S_next)
+                store = (feature_cur, action, R, done, feature_next)
+                memory_queue.append(store)
+                S = S_next
+                i += 1
         
 
 def parse_arguments():
