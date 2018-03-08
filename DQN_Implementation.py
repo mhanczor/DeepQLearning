@@ -48,7 +48,7 @@ class QNetwork(object):
         self.nObs = (None,) + env.observation_space.shape
         self.filepath = filepath
         
-        # tf.set_random_seed(6)
+        tf.set_random_seed(7)
         
         with tf.name_scope("Input"):
             self.x = tf.placeholder(tf.float32, self.nObs, name='Features')
@@ -57,24 +57,29 @@ class QNetwork(object):
             self.action = tf.placeholder(tf.int32, [None], name='Selected_Action')
         with tf.name_scope("Layers"):
             fc_1 = tf.layers.dense(inputs=self.x, units=30, activation=tf.nn.relu)
-            # dropout_1 = tf.layers.dropout(inputs=fc_1, rate=self.dropout_rate)
-            fc_2 = tf.layers.dense(inputs=fc_1, units=30, activation=tf.nn.relu)
-            # dropout_2 = tf.layers.dropout(inputs=fc_2, rate=self.dropout_rate)
+            dropout_1 = tf.layers.dropout(inputs=fc_1, rate=self.dropout_rate)
+            fc_2 = tf.layers.dense(inputs=dropout_1, units=30, activation=tf.nn.relu)
+            dropout_2 = tf.layers.dropout(inputs=fc_2, rate=self.dropout_rate)
+            fc_3 = tf.layers.dense(inputs=dropout_2, units=30, activation=tf.nn.relu)
+            dropout_3 = tf.layers.dropout(inputs=fc_3, rate=self.dropout_rate)
         with tf.name_scope("Output"):
-            self.q_pred = tf.layers.dense(inputs=fc_2, units=self.nA)
+            self.q_pred = tf.layers.dense(inputs=dropout_3, units=self.nA)
             self.q_onehot = tf.one_hot(self.action, self.nA, axis=-1)
             self.q_action = tf.reduce_sum(tf.multiply(self.q_onehot, self.q_pred), 1, keepdims=True) # Qval for the chosen action, should have a dimension (None, 1)
         with tf.name_scope("Loss"):
-            regularizer = 0.01*(tf.nn.l2_loss(fc_1) + tf.nn.l2_loss(fc_2))
-            self.loss = tf.losses.mean_squared_error(self.q_target, self.q_action) #+ regularizer
-            # self.loss = tf.losses.huber_loss(self.q_target, self.q_action, delta=1.0) #+ regularizer
-            # self.clipped_loss = tf.clip_by_value(self.loss, -10, 10)
+            regularizer = 0.1*(tf.nn.l2_loss(fc_1) + tf.nn.l2_loss(fc_2) + tf.nn.l2_loss(fc_3))
+            self.new_target = tf.multiply(tf.one_hot(self.action, self.nA), self.q_target) + tf.multiply(tf.one_hot(self.action, self.nA, 0.0, 1.0), self.q_pred)
+            # loss = tf.reduce_mean(tf.losses.mean_squared_error(self.new_target, self.q_pred))
+            # self.loss = tf.reduce_mean(loss + regularizer)
+            self.loss = tf.losses.mean_squared_error(self.new_target, self.q_pred) #+ regularizer
+            # self.loss = tf.losses.huber_loss(self.new_target, self.q_pred, delta=3) #+ regularizer
+            self.clipped_loss = tf.clip_by_value(self.loss, 0, 10000)
             self.loss_summary = tf.summary.scalar("Loss", self.loss)
         with tf.name_scope("Optimize"):
             self.global_step = tf.Variable(0, trainable=False, name='global_step')
-            # self.opt = tf.train.AdamOptimizer(alpha).minimize(self.loss, global_step=self.global_step)
+            self.opt = tf.train.AdamOptimizer(alpha).minimize(self.clipped_loss, global_step=self.global_step)
             # self.opt = tf.train.AdamOptimizer(alpha).minimize(self.clipped_loss, global_step=self.global_step)
-            self.opt = tf.train.GradientDescentOptimizer(alpha).minimize(self.loss, global_step=self.global_step)
+            # self.opt = tf.train.GradientDescentOptimizer(alpha).minimize(self.loss, global_step=self.global_step)
         
         # Model will take in state
         # Model will output a q_value for each action
@@ -95,9 +100,9 @@ class QNetwork(object):
         # Update the model by calculating the loss over a selected action
         action = action.flatten() # Actions must be in a 1d aray
         feed_dict = {self.x: features, self.action: action, self.q_target: q_target}
-        _, loss_summary, loss, onehot, act, pred, target, q_act  = self.sess.run([self.opt, self.loss_summary, self.loss, self.q_onehot, self.action, self.q_pred, self.q_target, self.q_action], feed_dict=feed_dict)
-        print("Predicted: {}, Onehot: {}, Action: {}, Q-Act: {}, Target: {}, Loss: {}".format(pred, onehot, act, q_act, target, loss))
-        raw_input()
+        _, loss_summary, loss, onehot, act, pred, target, q_act, new_tar  = self.sess.run([self.opt, self.loss_summary, self.loss, self.q_onehot, self.action, self.q_pred, self.q_target, self.q_action, self.new_target], feed_dict=feed_dict)
+        # print("Predicted: {}, Onehot: {}, Action: {}, Q-Act: {}, Target: {}, Loss: {}".format(pred, onehot, act, q_act, new_tar, loss))
+        # raw_input()
         return loss_summary, loss
         
     def getFeatures(self, S):
@@ -124,12 +129,19 @@ class QNetwork(object):
         latest_ckpt = tf.train.latest_checkpoint(filename)
         if latest_ckpt:
             self.saver.restore(self.sess, latest_ckpt)
+            print('Loaded weights from {}'.format(latest_ckpt))
+        elif weight_file != '':
+            try:
+                self.saver.restore(self.sess, filename)
+                print('Loaded weights from {}'.format(filename))
+            except:
+                print("Loading didn't work")
         else:
             print('No weight file to load, starting from scratch')
             return -1
         
         self.writer = tf.summary.FileWriter(self.filepath+'events/', self.sess.graph)
-        print('Loaded weights from {}'.format(latest_ckpt))
+        
         
         
 class LinearQ(object):
@@ -353,7 +365,7 @@ class DQN_Agent(object):
                     summary, loss = self.net.update(features, q_target, action=np.array([[action]])) 
                     if np.isnan(loss):
                         print("Loss exploded")
-                        return              
+                        return          
                     
                     self.net.writer.add_summary(summary, tf.train.global_step(self.net.sess, self.net.global_step))
                 else:
@@ -405,7 +417,7 @@ class DQN_Agent(object):
                 iters += 1
             if ep % 100 == 0:
                 print("episode {} complete, epsilon={}".format(ep, epsilon))
-            if ep % 2000 == 0:
+            if ep % 1000 == 0:
                 self.net.save_model_weights()
 
     def test(self, model_file=None, episodes=100, epsilon=0.0):

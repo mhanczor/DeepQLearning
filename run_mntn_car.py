@@ -9,8 +9,8 @@ config = tf.ConfigProto(gpu_options=gpu_ops)
 sess = tf.Session(config=config)
 
 env = gym.make('MountainCar-v0')
-episodes=5e3
-epsilon=0.0
+episodes=1e4
+epsilon=0.7
 decay_rate=1e-6
 
 # Linear only
@@ -29,9 +29,9 @@ decay_rate=1e-6
 
 # DeepQ Network
 gamma = 1.0
-alpha = 0.001
+alpha = 0.0001
 network = 'DNN' # Deep network, not dueling
-filepath = 'tmp/deepq/mountaincar/' #'tmp/linearq_replay/cartpole/'
+filepath = 'tmp/deepq/mountaincar2/' #'tmp/linearq_replay/cartpole/'
 replay = False # False for part 1, True for part 2
 
 # Initialize agent
@@ -40,7 +40,7 @@ agent = DQN_Agent(environment=env,
                     network_type=network,
                     gamma=gamma,
                     filepath=filepath)
-agent.net.load_model_weights()
+# agent.net.load_model_weights()
 
 # Train the network
 agent.train(episodes=episodes,
