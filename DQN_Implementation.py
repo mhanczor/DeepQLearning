@@ -44,34 +44,92 @@ class QNetwork(object):
         
         self.sess = sess
         env = environment
+        self.nA = env.action_space.n
+        self.nObs = (None,) + env.observation_space.shape
+        self.filepath = filepath
+        
+        # tf.set_random_seed(6)
+        
+        with tf.name_scope("Input"):
+            self.x = tf.placeholder(tf.float32, self.nObs, name='Features')
+            self.q_target = tf.placeholder(tf.float32, [None, 1], name='Q_Target')
+            self.dropout_rate = tf.placeholder(tf.float32, name='Dropout_Rate')
+            self.action = tf.placeholder(tf.int32, [None], name='Selected_Action')
+        with tf.name_scope("Layers"):
+            fc_1 = tf.layers.dense(inputs=self.x, units=30, activation=tf.nn.relu)
+            # dropout_1 = tf.layers.dropout(inputs=fc_1, rate=self.dropout_rate)
+            fc_2 = tf.layers.dense(inputs=fc_1, units=30, activation=tf.nn.relu)
+            # dropout_2 = tf.layers.dropout(inputs=fc_2, rate=self.dropout_rate)
+        with tf.name_scope("Output"):
+            self.q_pred = tf.layers.dense(inputs=fc_2, units=self.nA)
+            self.q_onehot = tf.one_hot(self.action, self.nA, axis=-1)
+            self.q_action = tf.reduce_sum(tf.multiply(self.q_onehot, self.q_pred), 1, keepdims=True) # Qval for the chosen action, should have a dimension (None, 1)
+        with tf.name_scope("Loss"):
+            regularizer = 0.01*(tf.nn.l2_loss(fc_1) + tf.nn.l2_loss(fc_2))
+            self.loss = tf.losses.mean_squared_error(self.q_target, self.q_action) #+ regularizer
+            # self.loss = tf.losses.huber_loss(self.q_target, self.q_action, delta=1.0) #+ regularizer
+            # self.clipped_loss = tf.clip_by_value(self.loss, -10, 10)
+            self.loss_summary = tf.summary.scalar("Loss", self.loss)
+        with tf.name_scope("Optimize"):
+            self.global_step = tf.Variable(0, trainable=False, name='global_step')
+            # self.opt = tf.train.AdamOptimizer(alpha).minimize(self.loss, global_step=self.global_step)
+            # self.opt = tf.train.AdamOptimizer(alpha).minimize(self.clipped_loss, global_step=self.global_step)
+            self.opt = tf.train.GradientDescentOptimizer(alpha).minimize(self.loss, global_step=self.global_step)
         
         # Model will take in state
-        # Model will output the 
+        # Model will output a q_value for each action
+        self.saver = tf.train.Saver(max_to_keep=10)
+        self._reset()
+    
+    def _reset(self):
+        self.sess.run(tf.global_variables_initializer())
+        self.writer = tf.summary.FileWriter(self.filepath+'events/', self.sess.graph)
         
     def infer(self, features):
         # Evaluate the data using the model
-        pass
+        feed_dict = {self.x: features} # Features is a (batch, obs_space) matrix
+        q_vals = self.sess.run(self.q_pred, feed_dict=feed_dict)
+        return q_vals
         
-    def update(self, features, q_target):
-        pass
+    def update(self, features, q_target, action=None):
+        # Update the model by calculating the loss over a selected action
+        action = action.flatten() # Actions must be in a 1d aray
+        feed_dict = {self.x: features, self.action: action, self.q_target: q_target}
+        _, loss_summary, loss, onehot, act, pred, target, q_act  = self.sess.run([self.opt, self.loss_summary, self.loss, self.q_onehot, self.action, self.q_pred, self.q_target, self.q_action], feed_dict=feed_dict)
+        print("Predicted: {}, Onehot: {}, Action: {}, Q-Act: {}, Target: {}, Loss: {}".format(pred, onehot, act, q_act, target, loss))
+        raw_input()
+        return loss_summary, loss
         
     def getFeatures(self, S):
         # Prepare the data for beiing fed into the model
-        
         # Return the features as a (1, feature_size) vector
-        pass
+        # This is due to the linear model, maybe remove this from deep models
+        return np.atleast_2d(S)
     
-    def save_model_weights(self, suffix):
+    def save_model_weights(self):
         # Helper function to save your model / weights. 
-        pass
+        self.saver.save(self.sess, self.filepath + 'checkpoints/model.ckpt', global_step=tf.train.global_step(self.sess, self.global_step))
 
     def load_model(self, model_file):
         # Helper function to load an existing model.
         pass
 
-    def load_model_weights(self,weight_file):
-        # Helper funciton to load model weights. 
-        pass
+    def load_model_weights(self, weight_file=''):
+        # Helper funciton to load model weights.
+        if weight_file == '':
+            filename = self.filepath+'checkpoints/'
+        else:
+            filename = self.filepath + 'checkpoints/' + weight_file
+        
+        latest_ckpt = tf.train.latest_checkpoint(filename)
+        if latest_ckpt:
+            self.saver.restore(self.sess, latest_ckpt)
+        else:
+            print('No weight file to load, starting from scratch')
+            return -1
+        
+        self.writer = tf.summary.FileWriter(self.filepath+'events/', self.sess.graph)
+        print('Loaded weights from {}'.format(latest_ckpt))
         
         
 class LinearQ(object):
@@ -106,8 +164,8 @@ class LinearQ(object):
             self.loss_sum = tf.summary.scalar("Loss", self.loss)
         with tf.name_scope("Optimize"):
             self.global_step = tf.Variable(0, trainable=False, name='global_step')
-            self.opt = tf.train.GradientDescentOptimizer(alpha).minimize(self.loss, global_step=self.global_step)  #Change this to Adam later
-            # self.opt = tf.train.AdamOptimizer(alpha).minimize(self.loss, global_step=self.global_step)
+            # self.opt = tf.train.GradientDescentOptimizer(alpha).minimize(self.loss, global_step=self.global_step)  #Change this to Adam later
+            self.opt = tf.train.AdamOptimizer(alpha).minimize(self.loss, global_step=self.global_step)
 
         self.saver = tf.train.Saver(max_to_keep=10)
         self._reset()
@@ -122,10 +180,10 @@ class LinearQ(object):
         pred_qval = self.sess.run(self.q_values, feed_dict=feed_dict)
         return pred_qval
 
-    def update(self, features, q_target):
+    def update(self, features, q_target, action=None):
         feed_dict = {self.x: features, self.q_target: q_target}
-        _, summary, w = self.sess.run([self.opt, self.loss_sum, self.w], feed_dict=feed_dict)
-        return summary, w
+        _, summary, loss = self.sess.run([self.opt, self.loss_sum, self.loss], feed_dict=feed_dict)
+        return summary, loss
     
     def getFeatures(self, S):
         # Create a simple feature vector that is a combination of actions and state info
@@ -160,7 +218,7 @@ class LinearQ(object):
             print('No weight file to load, starting from scratch')
             return -1
         
-        self.writer = tf.summary.FileWriter('tmp/linearq', self.sess.graph)
+        self.writer = tf.summary.FileWriter(self.filepath+'events/', self.sess.graph)
         print('Loaded weights from {}'.format(latest_ckpt))
                 
 
@@ -178,7 +236,7 @@ class Replay_Memory(object):
         self.memory_size = memory_size
         self.feature_shape = None
 
-    def sample_batch(self, batch_size=32):
+    def sample_batch(self, batch_size=32, is_linear=True):
         # This function returns a batch of randomly sampled transitions - i.e. state, action, reward, next state, terminal flag tuples. 
         # You will feed this to your model to train.
         
@@ -188,27 +246,32 @@ class Replay_Memory(object):
             raise ValueError
         
         batch = random.sample(self.memory, batch_size)
-        batch_features = (batch_size,) + self.feature_shape
+        batch_features = (batch_size,) + self.feature_shape[1:]
         cur_features = np.zeros(batch_features)
         actions = np.zeros((batch_size, 1))
         rewards = np.zeros((batch_size, 1))
         dones = np.zeros((batch_size, 1))
-        # next_features = np.zeros(batch_size, self.feature_shape)
-        next_features = [] # TODO bandaid for mntncar
+        if is_linear:
+            next_features = [] # bandaid for mntncar
+        else:
+            next_features = np.zeros(batch_features)
         
         for i, ele in enumerate(batch):
             cur_features[i,:] = ele[0]
             actions[i,:] = ele[1]
             rewards[i,:] = ele[2]
             dones[i,:] = ele[3]
-            # next_features[i,:] = ele[4] # TODO bandaid for mntncar
-            next_features += (ele[4],)        
+            if is_linear:
+                next_features += (ele[4],) # For linear state and action features
+            else:
+                next_features[i,:] = ele[4]    
         return (cur_features, actions, rewards, dones, next_features)
 
     def append(self, transition):
         
         if not self.feature_shape: #On the first entry record the shape of the features
             self.feature_shape = transition[0].shape
+            print(self.feature_shape)
         
         # Appends transition to the memory.
         if self.size() >= self.memory_size:
@@ -237,10 +300,13 @@ class DQN_Agent(object):
                 
         if network_type == 'Linear':
             self.net = LinearQ(environment, sess=sess, filepath=filepath, alpha=alpha)
+            self.linear = True
         elif network_type == 'DNN':
             self.net = QNetwork(environment, sess=sess, filepath=filepath, alpha=alpha)
+            self.linear = False
         elif network_type == 'DCNN':
             self.net = ConvQNetwork(environment, sess=sess, filepath=filepath, alpha=alpha)
+            self.linear = False
         else:
             raise ValueError
 
@@ -268,7 +334,7 @@ class DQN_Agent(object):
                 features = self.net.getFeatures(S)
                 # Epsilon greedy training policy
                 if np.random.sample() < epsilon:
-                    action = np.random.choice(self.nA)
+                    action = np.random.randint(self.nA)
                 else:
                     q_vals = self.net.infer(features)
                     action = np.argmax(q_vals)
@@ -282,39 +348,52 @@ class DQN_Agent(object):
                         q_vals_next = self.net.infer(feature_next)
                         q_target = np.array([[self.gamma*np.max(q_vals_next) + R]])
                         
-                    summary,_ = self.net.update(features[None,action,:], q_target) # Update the model parameters
+                    if self.linear:
+                        features = features[None,action,:]
+                    summary, loss = self.net.update(features, q_target, action=np.array([[action]])) 
+                    if np.isnan(loss):
+                        print("Loss exploded")
+                        return              
+                    
                     self.net.writer.add_summary(summary, tf.train.global_step(self.net.sess, self.net.global_step))
                 else:
                     # Update the gradient with experience replay
-                    feature_cur = features[action,:]
+                    if self.linear:
+                        features = features[None,action,:]
                     feature_next = self.net.getFeatures(S_next)
-                    store = (feature_cur, action, R, done, feature_next)
-                    # Store the tuple (feature_cur, action, R, done, feature_next)
+                    store = (features, action, R, done, feature_next)
+                    # Store the tuple (features, action, R, done, feature_next)
                     memory_queue.append(store)
                     
                     # Ranomly select a batch of tuples from memory
-                    cur_features, actions, rewards, dones, next_features = memory_queue.sample_batch(batch_size=batch_size)
+                    cur_features, actions, rewards, dones, next_features = memory_queue.sample_batch(batch_size=batch_size, is_linear=self.linear)
                     
-                    # How do I handle the next features in a batch? for atari it's easier?
-                    #  Use a bandaid for now                    
-                    # For mountaincar and cartpole:
-                    # MntnCar the evale is going to take in 3 features and spit out a list of q_vals
-                    best_q = np.zeros((batch_size,1))
-                    for i, ele in enumerate(next_features):
-                        best_q[i,:] = np.max(self.net.infer(ele))
+                    # Need to differentiate between features for linear and deep models
+                    # Features for the linear model are state and action dependent
+                    if self.linear:
+                        best_q = np.zeros((batch_size,1))
+                        for i, ele in enumerate(next_features):
+                            best_q[i,:] = np.max(self.net.infer(ele))
+                    else:
+                        best_q = self.net.infer(next_features)
+                        best_q = np.max(best_q, axis=1, keepdims=True)
                     
                     # For atari:
                     # Atari the evaluate is going to take in one feature and spit out a list of q_vals
                                         
                     done_mask = 1 - dones.astype(int) # Makes a mask of 0 where done is true, 1 otherwise
-                    q_target = best_q * done_mask + rewards # If done, target just reward, else target reward + best_q
+                    q_target = self.gamma*best_q * done_mask + rewards # If done, target just reward, else target reward + best_q
                     
                     # Update the gradients with the batch
-                    summary,_ = self.net.update(cur_features, q_target)
+                    summary, loss = self.net.update(cur_features, q_target, action=actions)
+                    if np.isnan(loss):
+                        print("Loss exploded")
+                        return
                     self.net.writer.add_summary(summary, tf.train.global_step(self.net.sess, self.net.global_step))
                 
                 S = S_next # Update the state info
-                epsilon -= decay_rate # Reduce epsilon as policy learns
+                if epsilon >= 0.1: # Keep some exploration
+                    epsilon -= decay_rate # Reduce epsilon as policy learns
                 
                 if iters % check_rate == 0:
                     # Test the model performance
@@ -324,10 +403,8 @@ class DQN_Agent(object):
                     self.net.writer.add_summary(reward_summary, tf.train.global_step(self.net.sess, self.net.global_step))
                     done = True
                 iters += 1
-
             if ep % 100 == 0:
                 print("episode {} complete, epsilon={}".format(ep, epsilon))
-                print(self.net.sess.run([self.net.w, self.net.b]))
             if ep % 2000 == 0:
                 self.net.save_model_weights()
 
@@ -371,15 +448,16 @@ class DQN_Agent(object):
                 features = self.net.getFeatures(S)
                 # Epsilon greedy training policy
                 if np.random.sample() < 0.5: # Add some stochasticity to the burn in
-                    action = np.random.choice(self.nA)
+                    action = self.env.action_space.sample()
                 else:
                     q_vals = self.net.infer(features)
                     action = np.argmax(q_vals)
                 # Execute selected action
                 S_next, R, done,_ = self.env.step(action)
-                feature_cur = features[action,:]
+                if self.linear:
+                    features = features[None,action,:] # (1, state*action)
                 feature_next = self.net.getFeatures(S_next)
-                store = (feature_cur, action, R, done, feature_next)
+                store = (features, action, R, done, feature_next)
                 memory_queue.append(store)
                 S = S_next
                 i += 1
