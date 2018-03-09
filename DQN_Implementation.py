@@ -38,7 +38,7 @@ class QNetwork(object):
     # The network should take in state of the world as an input, 
     # and output Q values of the actions available to the agent as the output. 
 
-    def __init__(self, environment, sess, alpha=0.0001, filepath='tmp/deepq/'):
+    def __init__(self, environment, sess, alpha=0.0001, filepath='tmp/deepq/', is_dueling=False):
         # Define your network architecture here. It is also a good idea to define any training operations 
         # and optimizers here, initialize your variables, or alternately compile your model here.  
         
@@ -48,7 +48,8 @@ class QNetwork(object):
         self.nObs = (None,) + env.observation_space.shape
         self.filepath = filepath
         
-        tf.set_random_seed(7)
+        tf.set_random_seed(9) # good for 30s
+        
         
         with tf.name_scope("Input"):
             self.x = tf.placeholder(tf.float32, self.nObs, name='Features')
@@ -57,29 +58,37 @@ class QNetwork(object):
             self.action = tf.placeholder(tf.int32, [None], name='Selected_Action')
         with tf.name_scope("Layers"):
             fc_1 = tf.layers.dense(inputs=self.x, units=30, activation=tf.nn.relu)
-            dropout_1 = tf.layers.dropout(inputs=fc_1, rate=self.dropout_rate)
-            fc_2 = tf.layers.dense(inputs=dropout_1, units=30, activation=tf.nn.relu)
-            dropout_2 = tf.layers.dropout(inputs=fc_2, rate=self.dropout_rate)
-            fc_3 = tf.layers.dense(inputs=dropout_2, units=30, activation=tf.nn.relu)
-            dropout_3 = tf.layers.dropout(inputs=fc_3, rate=self.dropout_rate)
+            fc_2 = tf.layers.dense(inputs=fc_1, units=30, activation=tf.nn.relu)
+            fc_3 = tf.layers.dense(inputs=fc_2, units=30, activation=tf.nn.relu)
         with tf.name_scope("Output"):
-            self.q_pred = tf.layers.dense(inputs=dropout_3, units=self.nA)
-            self.q_onehot = tf.one_hot(self.action, self.nA, axis=-1)
-            self.q_action = tf.reduce_sum(tf.multiply(self.q_onehot, self.q_pred), 1, keepdims=True) # Qval for the chosen action, should have a dimension (None, 1)
+            
+            if is_dueling:
+                # Dueling DQN
+                advantage = tf.layers.dense(inputs=fc_3, units=self.nA)
+                self.advantage = tf.subtract(advantage, tf.reduce_mean(advantage))
+                value = tf.layers.dense(inputs=fc_3, units=1)
+                self.q_pred = tf.add(value, self.advantage)
+                self.q_onehot = tf.one_hot(self.action, self.nA, axis=-1)
+                self.q_action = tf.reduce_sum(tf.multiply(self.q_onehot, self.q_pred), 1, keepdims=True)
+            else:
+                # Vanilla DQN
+                self.q_pred = tf.layers.dense(inputs=fc_3, units=self.nA)
+                self.q_onehot = tf.one_hot(self.action, self.nA, axis=-1)
+                self.q_action = tf.reduce_sum(tf.multiply(self.q_onehot, self.q_pred), 1, keepdims=True) # Qval for the chosen action, should have a dimension (None, 1)
+                
         with tf.name_scope("Loss"):
             regularizer = 0.1*(tf.nn.l2_loss(fc_1) + tf.nn.l2_loss(fc_2) + tf.nn.l2_loss(fc_3))
-            self.new_target = tf.multiply(tf.one_hot(self.action, self.nA), self.q_target) + tf.multiply(tf.one_hot(self.action, self.nA, 0.0, 1.0), self.q_pred)
-            # loss = tf.reduce_mean(tf.losses.mean_squared_error(self.new_target, self.q_pred))
-            # self.loss = tf.reduce_mean(loss + regularizer)
-            self.loss = tf.losses.mean_squared_error(self.new_target, self.q_pred) #+ regularizer
-            # self.loss = tf.losses.huber_loss(self.new_target, self.q_pred, delta=3) #+ regularizer
-            self.clipped_loss = tf.clip_by_value(self.loss, 0, 10000)
+            # self.loss = tf.losses.mean_squared_error(self.q_target, self.q_action) + regularizer
+            self.loss = tf.reduce_mean(tf.losses.huber_loss(self.q_target, self.q_action, delta=2000))
             self.loss_summary = tf.summary.scalar("Loss", self.loss)
         with tf.name_scope("Optimize"):
+            #Trying out a gradient clipping approach
+            # optimizer = tf.train.AdamOptimizer(1e-3)
+            # gradients, variables = zip(*optimizer.compute_gradients(loss))
+            # gradients, _ = tf.clip_by_global_norm(gradients, 5.0)
+            # optimize = optimizer.apply_gradients(zip(gradients, variables))
             self.global_step = tf.Variable(0, trainable=False, name='global_step')
-            self.opt = tf.train.AdamOptimizer(alpha).minimize(self.clipped_loss, global_step=self.global_step)
-            # self.opt = tf.train.AdamOptimizer(alpha).minimize(self.clipped_loss, global_step=self.global_step)
-            # self.opt = tf.train.GradientDescentOptimizer(alpha).minimize(self.loss, global_step=self.global_step)
+            self.opt = tf.train.AdamOptimizer(alpha).minimize(self.loss, global_step=self.global_step)
         
         # Model will take in state
         # Model will output a q_value for each action
@@ -100,7 +109,8 @@ class QNetwork(object):
         # Update the model by calculating the loss over a selected action
         action = action.flatten() # Actions must be in a 1d aray
         feed_dict = {self.x: features, self.action: action, self.q_target: q_target}
-        _, loss_summary, loss, onehot, act, pred, target, q_act, new_tar  = self.sess.run([self.opt, self.loss_summary, self.loss, self.q_onehot, self.action, self.q_pred, self.q_target, self.q_action, self.new_target], feed_dict=feed_dict)
+        _, loss_summary, loss, onehot, act, pred, target, q_act = self.sess.run([self.opt, self.loss_summary, self.loss, self.q_onehot, self.action, self.q_pred, self.q_target, self.q_action], feed_dict=feed_dict)
+        # _, loss_summary, loss, onehot, act, pred, target, q_act, new_tar  = self.sess.run([self.opt, self.loss_summary, self.loss, self.q_onehot, self.action, self.q_pred, self.q_target, self.q_action, self.new_target], feed_dict=feed_dict)
         # print("Predicted: {}, Onehot: {}, Action: {}, Q-Act: {}, Target: {}, Loss: {}".format(pred, onehot, act, q_act, new_tar, loss))
         # raw_input()
         return loss_summary, loss
@@ -114,7 +124,8 @@ class QNetwork(object):
     def save_model_weights(self):
         # Helper function to save your model / weights. 
         self.saver.save(self.sess, self.filepath + 'checkpoints/model.ckpt', global_step=tf.train.global_step(self.sess, self.global_step))
-
+        print("Saved Weights")
+        
     def load_model(self, model_file):
         # Helper function to load an existing model.
         pass
@@ -179,7 +190,7 @@ class LinearQ(object):
             # self.opt = tf.train.GradientDescentOptimizer(alpha).minimize(self.loss, global_step=self.global_step)  #Change this to Adam later
             self.opt = tf.train.AdamOptimizer(alpha).minimize(self.loss, global_step=self.global_step)
 
-        self.saver = tf.train.Saver(max_to_keep=10)
+        self.saver = tf.train.Saver(max_to_keep=20)
         self._reset()
     
     def _reset(self):
@@ -283,8 +294,7 @@ class Replay_Memory(object):
         
         if not self.feature_shape: #On the first entry record the shape of the features
             self.feature_shape = transition[0].shape
-            print(self.feature_shape)
-        
+                    
         # Appends transition to the memory.
         if self.size() >= self.memory_size:
               self.memory.pop()
@@ -315,6 +325,9 @@ class DQN_Agent(object):
             self.linear = True
         elif network_type == 'DNN':
             self.net = QNetwork(environment, sess=sess, filepath=filepath, alpha=alpha)
+            self.linear = False
+        elif network_type == 'DDNN':
+            self.net = QNetwork(environment, sess=sess, filepath=filepath, alpha=alpha, is_dueling=True)
             self.linear = False
         elif network_type == 'DCNN':
             self.net = ConvQNetwork(environment, sess=sess, filepath=filepath, alpha=alpha)
@@ -402,9 +415,10 @@ class DQN_Agent(object):
                         print("Loss exploded")
                         return
                     self.net.writer.add_summary(summary, tf.train.global_step(self.net.sess, self.net.global_step))
-                
+                    # print(loss)
+                    
                 S = S_next # Update the state info
-                if epsilon >= 0.1: # Keep some exploration
+                if epsilon > 0.05: # Keep some exploration
                     epsilon -= decay_rate # Reduce epsilon as policy learns
                 
                 if iters % check_rate == 0:
@@ -417,7 +431,7 @@ class DQN_Agent(object):
                 iters += 1
             if ep % 100 == 0:
                 print("episode {} complete, epsilon={}".format(ep, epsilon))
-            if ep % 1000 == 0:
+            if ep % 500 == 0:
                 self.net.save_model_weights()
 
     def test(self, model_file=None, episodes=100, epsilon=0.0):
