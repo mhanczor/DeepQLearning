@@ -33,14 +33,11 @@ class ConvQNetwork(object):
         pass
 
 class QNetwork(object):
-
-    # This class essentially defines the network architecture. 
-    # The network should take in state of the world as an input, 
-    # and output Q values of the actions available to the agent as the output. 
+    
+    # Deep Q network for solving environments MountainCar and CartPole
+    # Take in state information as an input, output q-value for each action
 
     def __init__(self, environment, sess, alpha=0.0001, filepath='tmp/deepq/', is_dueling=False):
-        # Define your network architecture here. It is also a good idea to define any training operations 
-        # and optimizers here, initialize your variables, or alternately compile your model here.  
         
         self.sess = sess
         env = environment
@@ -48,8 +45,7 @@ class QNetwork(object):
         self.nObs = (None,) + env.observation_space.shape
         self.filepath = filepath
         
-        tf.set_random_seed(9) # good for 30s
-        
+        # tf.set_random_seed(9) # good for 30s
         
         with tf.name_scope("Input"):
             self.x = tf.placeholder(tf.float32, self.nObs, name='Features')
@@ -78,20 +74,13 @@ class QNetwork(object):
                 
         with tf.name_scope("Loss"):
             regularizer = 0.1*(tf.nn.l2_loss(fc_1) + tf.nn.l2_loss(fc_2) + tf.nn.l2_loss(fc_3))
-            # self.loss = tf.losses.mean_squared_error(self.q_target, self.q_action) + regularizer
-            self.loss = tf.reduce_mean(tf.losses.huber_loss(self.q_target, self.q_action, delta=2000))
+            self.loss = tf.losses.mean_squared_error(self.q_target, self.q_action)
+            # self.loss = tf.reduce_mean(tf.losses.huber_loss(self.q_target, self.q_action, delta=2000))
             self.loss_summary = tf.summary.scalar("Loss", self.loss)
         with tf.name_scope("Optimize"):
-            #Trying out a gradient clipping approach
-            # optimizer = tf.train.AdamOptimizer(1e-3)
-            # gradients, variables = zip(*optimizer.compute_gradients(loss))
-            # gradients, _ = tf.clip_by_global_norm(gradients, 5.0)
-            # optimize = optimizer.apply_gradients(zip(gradients, variables))
             self.global_step = tf.Variable(0, trainable=False, name='global_step')
             self.opt = tf.train.AdamOptimizer(alpha).minimize(self.loss, global_step=self.global_step)
         
-        # Model will take in state
-        # Model will output a q_value for each action
         self.saver = tf.train.Saver(max_to_keep=10)
         self._reset()
     
@@ -112,13 +101,10 @@ class QNetwork(object):
         _, loss_summary, loss, onehot, act, pred, target, q_act = self.sess.run([self.opt, self.loss_summary, self.loss, self.q_onehot, self.action, self.q_pred, self.q_target, self.q_action], feed_dict=feed_dict)
         # _, loss_summary, loss, onehot, act, pred, target, q_act, new_tar  = self.sess.run([self.opt, self.loss_summary, self.loss, self.q_onehot, self.action, self.q_pred, self.q_target, self.q_action, self.new_target], feed_dict=feed_dict)
         # print("Predicted: {}, Onehot: {}, Action: {}, Q-Act: {}, Target: {}, Loss: {}".format(pred, onehot, act, q_act, new_tar, loss))
-        # raw_input()
         return loss_summary, loss
         
     def getFeatures(self, S):
-        # Prepare the data for beiing fed into the model
-        # Return the features as a (1, feature_size) vector
-        # This is due to the linear model, maybe remove this from deep models
+        # Used here to make agent compatible with multiple state information types
         return np.atleast_2d(S)
     
     def save_model_weights(self):
@@ -159,7 +145,7 @@ class LinearQ(object):
     
     def __init__(self, environment, sess, alpha=0.0001, filepath='tmp/linearq/'):
         # Model parameters:
-        self.sess = sess # the tensorflow session
+        self.sess = sess
         env = environment
         self.nA = env.action_space.n
         inputs = env.observation_space.shape[0]
@@ -172,13 +158,10 @@ class LinearQ(object):
         # Linear network architecture
         with tf.name_scope("InputSpace"):
             self.x = tf.placeholder(tf.float32, [None, self.features], name='Features')
-            # self.q = tf.placeholder(tf.float32, [None, 1], name='Q_Predicted')
             self.q_target = tf.placeholder(tf.float32, [None, 1], name='Q_Target')
         with tf.name_scope("Parameters"):
             self.w = tf.get_variable('Weights', shape=[self.features,1], initializer=tf.random_normal_initializer(stddev=2.0))
             self.b = tf.get_variable('Bias', shape=[1,], initializer=tf.initializers.zeros())
-            # self.w = tf.Variable(np.array([[29.06],[29.04],[29.061],[-2.234],[-1.6327],[2.0925]]), dtype=tf.float32, name='Weights')
-            # self.b = tf.Variable(np.array([[-92.8027]]), dtype=tf.float32, name='Bias')
         with tf.name_scope("Q_Val_Est"):
             self.q_values = tf.matmul(self.x, self.w) + self.b
         with tf.name_scope("Loss"):
@@ -251,18 +234,11 @@ class Replay_Memory(object):
 
         # The memory essentially stores transitions recorder from the agent
         # taking actions in the environment.
-
-        # Burn in episodes define the number of episodes that are written into the memory from the 
-        # randomly initialized agent. Memory size is the maximum size after which old elements in the memory are replaced. 
-        # A simple (if not the most efficient) was to implement the memory is as a list of transitions. 
         self.memory = []
         self.memory_size = memory_size
         self.feature_shape = None
 
-    def sample_batch(self, batch_size=32, is_linear=True):
-        # This function returns a batch of randomly sampled transitions - i.e. state, action, reward, next state, terminal flag tuples. 
-        # You will feed this to your model to train.
-        
+    def sample_batch(self, batch_size=32, is_linear=True):    
         # Return the data in matrix forms for easy feeding into networks
         # Data should be in in form (batch, values)
         if batch_size < 1 or batch_size >= self.size():
@@ -275,7 +251,7 @@ class Replay_Memory(object):
         rewards = np.zeros((batch_size, 1))
         dones = np.zeros((batch_size, 1))
         if is_linear:
-            next_features = [] # bandaid for mntncar
+            next_features = []
         else:
             next_features = np.zeros(batch_features)
         
@@ -311,14 +287,10 @@ class DQN_Agent(object):
     
     def __init__(self, environment, sess, network_type, render=False, gamma=1., alpha=0.001, filepath='tmp/'):
 
-        # Create an instance of the network itself, as well as the memory. 
-        # Here is also a good place to set environmental parameters,
-        # as well as training parameters - number of episodes / iterations, etc.
         self.env = environment
         self.nA = self.env.action_space.n
         self.render = render
         self.gamma = gamma
-        # Initialize the memory for experience replay
                 
         if network_type == 'Linear':
             self.net = LinearQ(environment, sess=sess, filepath=filepath, alpha=alpha)
@@ -334,10 +306,6 @@ class DQN_Agent(object):
             self.linear = False
         else:
             raise ValueError
-
-    def greedy_policy(self, q_values):
-        # Creating greedy policy for test time. 
-        return np.argmax(q_values)
 
     def train(self, episodes=1e3, epsilon=0.7, decay_rate=4.5e-6, replay=False, check_rate=1e4):
         # Interact with the environment and update the model parameters
@@ -431,11 +399,11 @@ class DQN_Agent(object):
                 iters += 1
             if ep % 100 == 0:
                 print("episode {} complete, epsilon={}".format(ep, epsilon))
-            if ep % 500 == 0:
+            if ep % 1000 == 0:
                 self.net.save_model_weights()
 
     def test(self, model_file=None, episodes=100, epsilon=0.0):
-        # Evaluate the performance of your agent over 100 episodes, by calculating cummulative rewards for the 100 episodes.
+        # Evaluate the performance of the agent over 100 episodes
         total_reward = 0
         for ep in range(int(episodes)):
             episode_reward = 0
@@ -463,7 +431,7 @@ class DQN_Agent(object):
         return average_reward
     
     def burn_in_memory(self, memory_queue, burn_in=10000):
-        # Initialize your replay memory with a burn_in number of episodes / transitions. 
+        # Initialize the replay memory with a burn_in number of episodes / transitions. 
         i = 0
         while True:
             S = self.env.reset()
@@ -508,24 +476,17 @@ def main(args):
     gpu_ops = tf.GPUOptions(allow_growth=True)
     config = tf.ConfigProto(gpu_options=gpu_ops)
     sess = tf.Session(config=config)
-    # sess = tf.Session()
 
-    # You want to create an instance of the DQN_Agent class here, and then train / test it.
+    # Create an instance of the environment and agent
     env = gym.make(environment_name)
     agent = DQN_Agent(env, sess=sess, network_type=network_type)
     
-    
-    # agent.net.save_model_weights('test_name')
-    
-    # agent.render = True
-    # print(sess.run(agent.net.w))
+    agent.render = True
     for i in range(5):
         agent.train()
-        # print(sess.run(agent.net.w))
         reward = agent.test(episodes=20)
         print("Test reward: {}".format(reward))
     env.close()
-    agent.net.save_model_weights()
     
 
 if __name__ == '__main__':
