@@ -27,12 +27,19 @@ epsilon=0.8
 # filepath = 'tmp/linearq_replay/cartpole/' #'tmp/linearq_replay/cartpole/'
 # replay = True # False for part 1, True for part 2
 
+# # # DeepQ Network - COMPLETE
+# gamma = 0.99
+# alpha = 0.0001
+# network = 'DNN' # Deep network, not dueling
+# filepath = 'tmp/deepq/cartpole/'
+# replay = True 
+
 # # DeepQ Network - COMPLETE
-gamma = 0.99
-alpha = 0.0001
-network = 'DNN' # Deep network, not dueling
-filepath = 'tmp/deepq/cartpole/'
-replay = True 
+# gamma = 0.99
+# alpha = 0.0001
+# network = 'DDNN' # Deep network, not dueling
+# filepath = 'tmp/dueling-q/cartpole/'
+# replay = True 
 
 # Initialize agent
 agent = DQN_Agent(environment=env, 
@@ -41,18 +48,26 @@ agent = DQN_Agent(environment=env,
                     gamma=gamma,
                     filepath=filepath,
                     alpha=alpha)
-agent.net.load_model_weights('model.ckpt-23245')
+# agent.net.load_model_weights('model.ckpt-253545')
 
 # Train the network
 # agent.train(episodes=episodes,
 #             epsilon=epsilon,
 #             replay=replay)
 # agent.net.save_model_weights()
-
+# 
 agent.render=True
 agent.test(episodes=20,
             epsilon=0.00)
+
+
+
+# Final testing
+agent.render = False
+total_reward = agent.test(episodes=100,
+            epsilon=0.00)
+print("Tested total average reward: {}".format(total_reward))
+
+
+
 agent.net.writer.close()
-
-
-# Need to have separate epsilon decay rates for cartpole and mountain

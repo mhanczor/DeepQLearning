@@ -2,35 +2,137 @@
 from __future__ import absolute_import, division, print_function
 
 import pyglet
-from gym.envs.classic_control import rendering # Have to impor this before tensorflow
+# from gym.envs.classic_control import rendering # Have to impor this before tensorflow
 import tensorflow as tf
 import numpy as np
 import gym, sys, copy, argparse, time, os
 import random
+from PIL import Image
 
 
 class ConvQNetwork(object):
-
-    # This class essentially defines the network architecture. 
-    # The network should take in state of the world as an input, 
-    # and output Q values of the actions available to the agent as the output. 
-
-    def __init__(self, environment, alpha=0.001, gamma=1):
-        # Define your network architecture here. It is also a good idea to define any training operations 
-        # and optimizers here, initialize your variables, or alternately compile your model here.  
-        pass
     
-    def save_model_weights(self, suffix):
-        # Helper function to save your model / weights. 
-        pass
+    # DeepQ Network for solving games with visual input like SpaceInvaders
+    def __init__(self, environment, sess, alpha=0.001, filepath='tmp/convq/', is_dueling=True):
+        self.sess = sess
+        env = environment
+        self.nA = env.action_space.n
+        self.nObs = (None,) + env.observation_space.shape
+        self.filepath = filepath
+        
+        channels = 4
+        self.image_size = [84, 84] # The image size to scale down to
+        self.frame_buffer = np.zeros(([1] + self.image_size + [channels]), dtype=np.uint8)
+        
+        with tf.name_scope("Input"):
+            input_size = [None] + self.image_size + [channels]
+            self.x = tf.placeholder(tf.float32, input_size, name='Features')
+            self.q_target = tf.placeholder(tf.float32, [None, 1], name='Q_Target')
+            self.action = tf.placeholder(tf.int32, [None], name='Selected_Action')
+        with tf.name_scope("Conv_Layers"):
+            # 84x84x4 input
+            cnv_1 = tf.layers.conv2d(self.x, filters=32, kernel_size=[8,8], strides=[4, 4])  #20x20x32
+            cnv_2 = tf.layers.conv2d(cnv_1, filters=64, kernel_size=[4,4], strides=[2, 2]) #9x9x64
+            cnv_3 = tf.layers.conv2d(cnv_2, filters=64, kernel_size=[3,3], strides=[1, 1]) #7x7x64
+            cnv_3_flat = tf.reshape(cnv_3, [-1, 7 * 7 * 64])
+        with tf.name_scope("Layers"):
+            fc_1 = tf.layers.dense(inputs=cnv_3_flat, units=512, activation=tf.nn.relu)
+        with tf.name_scope("Output"):
+            if is_dueling:
+                # Dueling DQN
+                advantage = tf.layers.dense(inputs=fc_1, units=self.nA)
+                self.advantage = tf.subtract(advantage, tf.reduce_mean(advantage))
+                value = tf.layers.dense(inputs=fc_1, units=1)
+                self.q_pred = tf.add(value, self.advantage)
+                self.q_onehot = tf.one_hot(self.action, self.nA, axis=-1)
+                self.q_action = tf.reduce_sum(tf.multiply(self.q_onehot, self.q_pred), 1, keepdims=True)
+            else:
+                # Vanilla DQN
+                self.q_pred = tf.layers.dense(inputs=fc_1, units=self.nA)
+                self.q_onehot = tf.one_hot(self.action, self.nA, axis=-1)
+                self.q_action = tf.reduce_sum(tf.multiply(self.q_onehot, self.q_pred), 1, keepdims=True) # Qval for the chosen action, should have a dimension (None, 1)
+            with tf.name_scope("Loss"):
+                self.loss = tf.losses.mean_squared_error(self.q_target, self.q_action)
+                self.loss_summary = tf.summary.scalar("Loss", self.loss)
+            with tf.name_scope("Optimize"):
+                # Clip gradient norm to be leq 10
+                train_opt = tf.train.AdamOptimizer(alpha)
+                grads = train_opt.compute_gradients(self.loss)
+                capped_grads = [(tf.clip_by_norm(grad, [10]), var) for grad, var in grads]
+                self.global_step = tf.Variable(0, trainable=False, name='global_step')
+                self.opt = train_opt.apply_gradients(capped_grads, global_step=self.global_step)
+                
+                # self.opt = tf.train.AdamOptimizer(alpha).minimize(self.loss, global_step=self.global_step)
+            
+            self.saver = tf.train.Saver(max_to_keep=15)
+            self._reset()
+        
+    def _reset(self):
+        self.sess.run(tf.global_variables_initializer())
+        self.writer = tf.summary.FileWriter(self.filepath+'events/', self.sess.graph)
+    
+    def infer(self, features):
+        # Evaluate the data using the model
+        feed_dict = {self.x: features} # Features is a (batch, obs_space) matrix
+        q_vals = self.sess.run(self.q_pred, feed_dict=feed_dict)
+        return q_vals
+    
+    def update(self, features, q_target, action=None):
+        # Update the model by calculating the loss over a selected action
+        action = action.flatten() # Actions must be in a 1d aray
+        feed_dict = {self.x: features, self.action: action, self.q_target: q_target}
+        _, loss_summary, loss, onehot, act, pred, target, q_act = self.sess.run([self.opt, self.loss_summary, self.loss, self.q_onehot, self.action, self.q_pred, self.q_target, self.q_action], feed_dict=feed_dict)
+        # _, loss_summary, loss, onehot, act, pred, target, q_act, new_tar  = self.sess.run([self.opt, self.loss_summary, self.loss, self.q_onehot, self.action, self.q_pred, self.q_target, self.q_action, self.new_target], feed_dict=feed_dict)
+        # print("Predicted: {}, Onehot: {}, Action: {}, Q-Act: {}, Target: {}, Loss: {}".format(pred, onehot, act, q_act, new_tar, loss))
+        return loss_summary, loss
+    
+    def getFeatures(self, S):
+        # Need to convert raw image input into 4 stacked frames
+        im = Image.fromarray(S)
+        im = im.convert(mode='L')
+        box = [15, 10, im.width-15, im.height-12] # From experiments with the images
+        im = im.crop(box=box)
+        im = im.resize([84,84], resample=2)
+        reduced_frame = np.asarray(im, dtype=np.uint8)
 
+        # Should append to the frame queue
+        self.frame_buffer = np.roll(self.frame_buffer, 1, 3)
+        self.frame_buffer[0,:,:,0] = reduced_frame
+        
+        #Should only be processing the most recent frame, use it like a queue
+        return self.frame_buffer
+    
+    def save_model_weights(self):
+        # Helper function to save your model / weights. 
+        self.saver.save(self.sess, self.filepath + 'checkpoints/model.ckpt', global_step=tf.train.global_step(self.sess, self.global_step))
+        print("Saved Weights")
+        
     def load_model(self, model_file):
         # Helper function to load an existing model.
         pass
 
-    def load_model_weights(self,weight_file):
-        # Helper funciton to load model weights. 
-        pass
+    def load_model_weights(self, weight_file=''):
+        # Helper funciton to load model weights.
+        if weight_file == '':
+            filename = self.filepath+'checkpoints/'
+        else:
+            filename = self.filepath + 'checkpoints/' + weight_file
+        
+        latest_ckpt = tf.train.latest_checkpoint(filename)
+        if latest_ckpt:
+            self.saver.restore(self.sess, latest_ckpt)
+            print('Loaded weights from {}'.format(latest_ckpt))
+        elif weight_file != '':
+            try:
+                self.saver.restore(self.sess, filename)
+                print('Loaded weights from {}'.format(filename))
+            except:
+                print("Loading didn't work")
+        else:
+            print('No weight file to load, starting from scratch')
+            return -1
+        
+        self.writer = tf.summary.FileWriter(self.filepath+'events/', self.sess.graph)
 
 class QNetwork(object):
     
@@ -50,7 +152,6 @@ class QNetwork(object):
         with tf.name_scope("Input"):
             self.x = tf.placeholder(tf.float32, self.nObs, name='Features')
             self.q_target = tf.placeholder(tf.float32, [None, 1], name='Q_Target')
-            self.dropout_rate = tf.placeholder(tf.float32, name='Dropout_Rate')
             self.action = tf.placeholder(tf.int32, [None], name='Selected_Action')
         with tf.name_scope("Layers"):
             fc_1 = tf.layers.dense(inputs=self.x, units=30, activation=tf.nn.relu)
@@ -153,7 +254,8 @@ class LinearQ(object):
         self.filepath = filepath
         
         # Set a random seed
-        tf.set_random_seed(2) # MountainCar
+        tf.set_random_seed(2) # MountainCar No Replay
+        # tf.set_random_seed(7)
         
         # Linear network architecture
         with tf.name_scope("InputSpace"):
@@ -169,9 +271,15 @@ class LinearQ(object):
             self.loss = tf.losses.mean_squared_error(self.q_values, self.q_target) + 0.01*regularizer
             self.loss_sum = tf.summary.scalar("Loss", self.loss)
         with tf.name_scope("Optimize"):
+            
             self.global_step = tf.Variable(0, trainable=False, name='global_step')
             # self.opt = tf.train.GradientDescentOptimizer(alpha).minimize(self.loss, global_step=self.global_step)  #Change this to Adam later
-            self.opt = tf.train.AdamOptimizer(alpha).minimize(self.loss, global_step=self.global_step)
+            train_opt = tf.train.AdamOptimizer(alpha)
+            grads = train_opt.compute_gradients(self.loss)
+            capped_grads = [(tf.clip_by_value(grad, -100., 100.), var) for grad, var in grads]
+            self.opt = train_opt.apply_gradients(capped_grads, global_step=self.global_step)
+            
+            # self.opt = tf.train.AdamOptimizer(alpha).minimize(self.loss, global_step=self.global_step)
 
         self.saver = tf.train.Saver(max_to_keep=20)
         self._reset()
@@ -188,7 +296,9 @@ class LinearQ(object):
 
     def update(self, features, q_target, action=None):
         feed_dict = {self.x: features, self.q_target: q_target}
-        _, summary, loss = self.sess.run([self.opt, self.loss_sum, self.loss], feed_dict=feed_dict)
+        _, summary, loss, w = self.sess.run([self.opt, self.loss_sum, self.loss, self.w], feed_dict=feed_dict)
+        # print(w)
+        # raw_input()
         return summary, loss
     
     def getFeatures(self, S):
@@ -220,12 +330,18 @@ class LinearQ(object):
         latest_ckpt = tf.train.latest_checkpoint(filename)
         if latest_ckpt:
             self.saver.restore(self.sess, latest_ckpt)
+            print('Loaded weights from {}'.format(latest_ckpt))
+        elif weight_file != '':
+            try:
+                self.saver.restore(self.sess, filename)
+                print('Loaded weights from {}'.format(filename))
+            except:
+                print("Loading didn't work")
         else:
             print('No weight file to load, starting from scratch')
             return -1
         
         self.writer = tf.summary.FileWriter(self.filepath+'events/', self.sess.graph)
-        print('Loaded weights from {}'.format(latest_ckpt))
                 
 
 class Replay_Memory(object):
@@ -263,7 +379,7 @@ class Replay_Memory(object):
             if is_linear:
                 next_features += (ele[4],) # For linear state and action features
             else:
-                next_features[i,:] = ele[4]    
+                next_features[i,:] = ele[4]   
         return (cur_features, actions, rewards, dones, next_features)
 
     def append(self, transition):
@@ -307,21 +423,32 @@ class DQN_Agent(object):
         else:
             raise ValueError
 
-    def train(self, episodes=1e3, epsilon=0.7, decay_rate=4.5e-6, replay=False, check_rate=1e4):
+    def train(self, episodes=1e3, epsilon=0.7, decay_rate=4.5e-6, replay=False, check_rate=1e4, memory_size=50000, burn_in=10000):
         # Interact with the environment and update the model parameters
         # If using experience replay then update the model with a sampled minibatch
         
         if replay: # If using experience replay, need to burn in a set of transitions
-            memory_queue = Replay_Memory()
-            self.burn_in_memory(memory_queue)
-            batch_size = 32
-            print('Memory Burned In')
+            if self.linear:
+                memory_queue = Replay_Memory()
+                self.burn_in_memory(memory_queue, burn_in=100)
+                batch_size = 32
+                print('Memory Burned In')
+            else:
+                memory_queue = Replay_Memory(memory_size=memory_size)
+                self.burn_in_memory(memory_queue, burn_in=burn_in)
+                batch_size = 32
+                print('Memory Burned In')
             
         iters = 0
         test_reward = 0
-        # reward_summary = tf.Summary()
+        reward_summary = tf.Summary()
+        ep_reward_summary = tf.Summary()
         for ep in range(int(episodes)):
+            ep_reward = 0
             S = self.env.reset()
+            if not self.linear:
+                for i in range(4):
+                    features = self.net.getFeatures(S) # Fill the Atari buffer with frames
             done = False
             while not done:
                 features = self.net.getFeatures(S)
@@ -333,6 +460,7 @@ class DQN_Agent(object):
                     action = np.argmax(q_vals)
                 # Execute selected action
                 S_next, R, done,_ = self.env.step(action)
+                ep_reward += R
                 if not replay:
                     if done:
                         q_target = np.array([[R]])
@@ -393,13 +521,16 @@ class DQN_Agent(object):
                     # Test the model performance
                     test_reward = self.test(episodes=20, epsilon=0.05) # Run a test to check the performance of the model
                     print('Reward: {}, Step: {}'.format(test_reward, tf.train.global_step(self.net.sess, self.net.global_step)))
-                    reward_summary = tf.Summary(value=[tf.Summary.Value(tag='test_reward', simple_value=test_reward)])
+                    reward_summary = tf.Summary(value=[tf.Summary.Value(tag='Test_Reward', simple_value=test_reward)])
                     self.net.writer.add_summary(reward_summary, tf.train.global_step(self.net.sess, self.net.global_step))
                     done = True
                 iters += 1
+            
+            ep_reward_summary = tf.Summary(value=[tf.Summary.Value(tag='Episode_Reward', simple_value=ep_reward)])
+            self.net.writer.add_summary(ep_reward_summary, tf.train.global_step(self.net.sess, self.net.global_step))
             if ep % 100 == 0:
                 print("episode {} complete, epsilon={}".format(ep, epsilon))
-            if ep % 1000 == 0:
+            if ep % 1000 == 0  and ep != 0:
                 self.net.save_model_weights()
 
     def test(self, model_file=None, episodes=100, epsilon=0.0):
