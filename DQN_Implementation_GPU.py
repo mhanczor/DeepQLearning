@@ -2,7 +2,7 @@
 from __future__ import absolute_import, division, print_function
 
 import pyglet
-# from gym.envs.classic_control import rendering # Have to impor this before tensorflow
+from gym.envs.classic_control import rendering # Have to impor this before tensorflow
 import tensorflow as tf
 import numpy as np
 import gym, sys, copy, argparse, time, os
@@ -60,7 +60,7 @@ class ConvQNetwork(object):
                 # Clip gradient norm to be leq 10
                 train_opt = tf.train.AdamOptimizer(alpha)
                 grads = train_opt.compute_gradients(self.loss)
-                capped_grads = [(tf.clip_by_norm(grad, [10]), var) for grad, var in grads]
+                capped_grads = [(tf.clip_by_norm(grad, 10), var) for grad, var in grads]
                 self.global_step = tf.Variable(0, trainable=False, name='global_step')
                 self.opt = train_opt.apply_gradients(capped_grads, global_step=self.global_step)
                 
@@ -109,8 +109,9 @@ class ConvQNetwork(object):
         self.saver.save(self.sess, self.filepath + 'checkpoints/model.ckpt', global_step=tf.train.global_step(self.sess, self.global_step))
         print("Saved Weights")
         
-    def load_model(self, model_file):
+    def load_model(self, model_file=''):
         # Helper function to load an existing model.
+        
         pass
 
     def load_model_weights(self, weight_file=''):
@@ -463,12 +464,12 @@ class DQN_Agent(object):
                 # Execute selected action
                 S_next, R, done,_ = self.env.step(action)
                 #Normalize rewards for SpaceInvaders
-                if R > 0:
-                    R = 1
-                elif R < 0:
-                    R = -1
-                else:
-                    R = 0
+                # if R > 0:
+                #     R = 1
+                # elif R < 0:
+                #     R = -1
+                # else:
+                #     R = 0
                 ep_reward += R
                 if not replay:
                     if done:
@@ -523,12 +524,12 @@ class DQN_Agent(object):
                     # print(loss)
                     
                 S = S_next # Update the state info
-                if epsilon > 0.05: # Keep some exploration
+                if epsilon > 0.1: # Keep some exploration
                     epsilon -= decay_rate # Reduce epsilon as policy learns
                 
                 if iters % check_rate == 0:
                     # Test the model performance
-                    test_reward = self.test(episodes=20, epsilon=0.05) # Run a test to check the performance of the model
+                    test_reward,_ = self.test(episodes=20, epsilon=0.05) # Run a test to check the performance of the model
                     print('Reward: {}, Step: {}'.format(test_reward, tf.train.global_step(self.net.sess, self.net.global_step)))
                     reward_summary = tf.Summary(value=[tf.Summary.Value(tag='Test_Reward', simple_value=test_reward)])
                     self.net.writer.add_summary(reward_summary, tf.train.global_step(self.net.sess, self.net.global_step))
@@ -545,6 +546,7 @@ class DQN_Agent(object):
     def test(self, model_file=None, episodes=100, epsilon=0.0):
         # Evaluate the performance of the agent over 100 episodes
         total_reward = 0
+        rewards = []
         for ep in range(int(episodes)):
             episode_reward = 0
             S = self.env.reset()
@@ -566,9 +568,10 @@ class DQN_Agent(object):
                     self.env.render()
                 S = S_next # Update the state
             total_reward += episode_reward
+            rewards += episode_reward
         
         average_reward = float(total_reward/episodes)
-        return average_reward
+        return average_reward, rewards
     
     def burn_in_memory(self, memory_queue, burn_in=10000):
         # Initialize the replay memory with a burn_in number of episodes / transitions. 
