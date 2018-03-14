@@ -40,9 +40,11 @@ class ConvQNetwork(object):
         with tf.name_scope("Output"):
             if is_dueling:
                 # Dueling DQN
-                advantage = tf.layers.dense(inputs=fc_1, units=self.nA)
+                fc_a1 = tf.layers.dense(inputs=fc_1, units=512, activation=tf.nn.relu)
+                advantage = tf.layers.dense(inputs=fc_a1, units=self.nA)
                 self.advantage = tf.subtract(advantage, tf.reduce_mean(advantage))
-                value = tf.layers.dense(inputs=fc_1, units=1)
+                fc_v1 = tf.layers.dense(inputs=fc_1, units=512, activation=tf.nn.relu)
+                value = tf.layers.dense(inputs=fc_v1, units=1)
                 self.q_pred = tf.add(value, self.advantage)
                 self.q_onehot = tf.one_hot(self.action, self.nA, axis=-1)
                 self.q_action = tf.reduce_sum(tf.multiply(self.q_onehot, self.q_pred), 1, keepdims=True)
@@ -537,7 +539,7 @@ class DQN_Agent(object):
             self.net.writer.add_summary(ep_reward_summary, tf.train.global_step(self.net.sess, self.net.global_step))
             if ep % 50 == 0:
                 print("episode {} complete, epsilon={}".format(ep, epsilon))
-            if ep % 500 == 0  and ep != 0:
+            if ep % 250 == 0  and ep != 0:
                 self.net.save_model_weights()
 
     def test(self, model_file=None, episodes=100, epsilon=0.0):

@@ -9,7 +9,7 @@ config = tf.ConfigProto(log_device_placement=True, gpu_options=gpu_ops)
 sess = tf.Session(config=config)
 
 env = gym.make('SpaceInvaders-v0')
-episodes=1e4
+episodes=5e3
 decay_rate=9e-7
 
 gamma = 0.99
