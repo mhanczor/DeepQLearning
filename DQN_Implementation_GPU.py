@@ -64,7 +64,7 @@ class ConvQNetwork(object):
                 
                 # self.opt = tf.train.AdamOptimizer(alpha).minimize(self.loss, global_step=self.global_step)
             
-            self.saver = tf.train.Saver(max_to_keep=15)
+            self.saver = tf.train.Saver(max_to_keep=20)
             self._reset()
         
     def _reset(self):
@@ -362,14 +362,14 @@ class Replay_Memory(object):
         
         batch = random.sample(self.memory, batch_size)
         batch_features = (batch_size,) + self.feature_shape[1:]
-        cur_features = np.zeros(batch_features)
+        cur_features = np.zeros(batch_features, dtype=np.uint8)
         actions = np.zeros((batch_size, 1), dtype=np.uint8)
         rewards = np.zeros((batch_size, 1), dtype=np.uint8)
         dones = np.zeros((batch_size, 1), dtype=np.bool)
         if is_linear:
             next_features = []
         else:
-            next_features = np.zeros(batch_features)
+            next_features = np.zeros(batch_features, dtype=np.uint8)
         
         for i, ele in enumerate(batch):
             cur_features[i,:] = ele[0]
@@ -460,6 +460,13 @@ class DQN_Agent(object):
                     action = np.argmax(q_vals)
                 # Execute selected action
                 S_next, R, done,_ = self.env.step(action)
+                #Normalize rewards for SpaceInvaders
+                if R > 0:
+                    R = 1
+                elif R < 0:
+                    R = -1
+                else:
+                    R = 0
                 ep_reward += R
                 if not replay:
                     if done:
@@ -528,9 +535,9 @@ class DQN_Agent(object):
             
             ep_reward_summary = tf.Summary(value=[tf.Summary.Value(tag='Episode_Reward', simple_value=ep_reward)])
             self.net.writer.add_summary(ep_reward_summary, tf.train.global_step(self.net.sess, self.net.global_step))
-            if ep % 100 == 0:
+            if ep % 50 == 0:
                 print("episode {} complete, epsilon={}".format(ep, epsilon))
-            if ep % 1000 == 0  and ep != 0:
+            if ep % 500 == 0  and ep != 0:
                 self.net.save_model_weights()
 
     def test(self, model_file=None, episodes=100, epsilon=0.0):

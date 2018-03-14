@@ -1,7 +1,7 @@
 #!/usr/bin/env python
 import tensorflow as tf
 import gym
-from DQN_Implementation import DQN_Agent
+from DQN_Implementation_GPU import DQN_Agent
 
 # Setting the session to allow growth, so it doesn't allocate all GPU memory
 gpu_ops = tf.GPUOptions(allow_growth=True)
@@ -9,7 +9,7 @@ config = tf.ConfigProto(log_device_placement=True, gpu_options=gpu_ops)
 sess = tf.Session(config=config)
 
 env = gym.make('SpaceInvaders-v0')
-episodes=5e4
+episodes=1e4
 decay_rate=9e-7
 
 gamma = 0.99
