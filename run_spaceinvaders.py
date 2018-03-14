@@ -5,15 +5,15 @@ from DQN_Implementation import DQN_Agent
 
 # Setting the session to allow growth, so it doesn't allocate all GPU memory
 gpu_ops = tf.GPUOptions(allow_growth=True)
-config = tf.ConfigProto(gpu_options=gpu_ops)
+config = tf.ConfigProto(log_device_placement=True, gpu_options=gpu_ops)
 sess = tf.Session(config=config)
 
 env = gym.make('SpaceInvaders-v0')
 episodes=5e4
 decay_rate=9e-7
 
-gamma = 1.0
-alpha = 0.0001
+gamma = 0.99
+alpha = 0.00025
 epsilon = 1.0 # started with 0.5
 network = 'DCNN' # Dueling Network
 filepath = 'tmp/spaceinvaders/run1'
@@ -35,7 +35,7 @@ agent.train(episodes=episodes,
             replay=replay,
             check_rate=5e4,
             memory_size=500000,
-            burn_in=100000)
+            burn_in=50000)
 agent.net.save_model_weights()
 
 # agent.render=True

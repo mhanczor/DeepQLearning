@@ -460,6 +460,13 @@ class DQN_Agent(object):
                     action = np.argmax(q_vals)
                 # Execute selected action
                 S_next, R, done,_ = self.env.step(action)
+                #Normalize rewards for SpaceInvaders
+                if R > 0:
+                    R = 1
+                elif R < 0:
+                    R = -1
+                else:
+                    R = 0
                 ep_reward += R
                 if not replay:
                     if done:
