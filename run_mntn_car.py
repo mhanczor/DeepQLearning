@@ -13,30 +13,6 @@ env = gym.make('MountainCar-v0')
 episodes=5e3
 decay_rate=1e-6
 
-# Linear only
-# gamma = 1.0
-# alpha = 0.00001
-# epsilon=0.5
-# network = 'Linear' # Linear for parts 1+2, QNetwork for parts 3+4
-# filepath = 'tmp/linearq/mountaincar/' #'tmp/linearq_replay/cartpole/'
-# replay = False # False for part 1, True for part 2
-
-# # Experience Replay
-# gamma = 1.0
-# alpha = 0.0001
-# epsilon=0.7
-# network = 'Linear' # Linear for parts 1+2, QNetwork for parts 3+4
-# filepath = 'tmp/linearq_replay/mountaincar/run1/' #'tmp/linearq_replay/cartpole/'
-# replay = True # False for part 1, True for part 2
-
-# # DeepQ Network
-# gamma = 1.0
-# alpha = 0.0001
-# epsilon = 0.7
-# network = 'DNN' # Deep network, not dueling
-# filepath = 'tmp/deepq/mountaincar/' #'tmp/linearq_replay/cartpole/'
-# replay = True 
-
 # Dueling DeepQ Network
 gamma = 1.0
 alpha = 0.00001 # started with 0.0001

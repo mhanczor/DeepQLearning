@@ -5,11 +5,10 @@ from DQN_Implementation import DQN_Agent
 import numpy as np
 
 # Setting the session to allow growth, so it doesn't allocate all GPU memory
-# gpu_ops = tf.GPUOptions(allow_growth=True)
-# config = tf.ConfigProto(log_device_placement=True, gpu_options=gpu_ops)
-# config = tf.ConfigProto(gpu_options=gpu_ops)
-# sess = tf.Session(config=config)
-sess = tf.Session()
+gpu_ops = tf.GPUOptions(allow_growth=True)
+config = tf.ConfigProto(log_device_placement=True, gpu_options=gpu_ops)
+config = tf.ConfigProto(gpu_options=gpu_ops)
+sess = tf.Session(config=config)
 
 env = gym.make('SpaceInvaders-v0')
 episodes=5e3

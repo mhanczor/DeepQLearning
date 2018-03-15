@@ -14,28 +14,7 @@ env = gym.make('CartPole-v0')
 episodes=5e3
 epsilon=0.8
 
-# Linear
-# gamma = 0.99
-# alpha = 0.001
-# network = 'Linear' # Linear for parts 1+2, QNetwork for parts 3+4
-# filepath = 'tmp/linearq/cartpole/' #'tmp/linearq_replay/cartpole/'
-# replay = False # False for part 1, True for part 2
-
-# # Linear Experience Replay
-# gamma = 0.99
-# alpha = 0.001
-# network = 'Linear' # Linear for parts 1+2, QNetwork for parts 3+4
-# filepath = 'tmp/linearq_replay/cartpole/run1/' #'tmp/linearq_replay/cartpole/'
-# replay = True # False for part 1, True for part 2
-
-# # # DeepQ Network
-# gamma = 0.99
-# alpha = 0.0001
-# network = 'DNN' # Deep network, not dueling
-# filepath = 'tmp/deepq/cartpole/'
-# replay = True 
-
-# # DeepQ Network
+# DeepQ Network
 gamma = 0.99
 alpha = 0.0001
 network = 'DDNN' # Deep network, not dueling
@@ -60,8 +39,6 @@ agent.net.save_model_weights()
 agent.render=True
 agent.test(episodes=100,
             epsilon=0.00)
-
-
 
 # Final testing
 agent.render = False
