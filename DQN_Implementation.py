@@ -2,7 +2,7 @@
 from __future__ import absolute_import, division, print_function
 
 import pyglet
-# from gym.envs.classic_control import rendering # Have to impor this before tensorflow
+from gym.envs.classic_control import rendering # Have to impor this before tensorflow, needs to be removed when using AWS
 import tensorflow as tf
 import numpy as np
 import gym, sys, copy, argparse, time, os
@@ -61,9 +61,7 @@ class ConvQNetwork(object):
                 capped_grads = [(tf.clip_by_norm(grad, [10]), var) for grad, var in grads]
                 self.global_step = tf.Variable(0, trainable=False, name='global_step')
                 self.opt = train_opt.apply_gradients(capped_grads, global_step=self.global_step)
-                
-                # self.opt = tf.train.AdamOptimizer(alpha).minimize(self.loss, global_step=self.global_step)
-            
+                            
             self.saver = tf.train.Saver(max_to_keep=15)
             self._reset()
         
@@ -82,8 +80,6 @@ class ConvQNetwork(object):
         action = action.flatten() # Actions must be in a 1d aray
         feed_dict = {self.x: features, self.action: action, self.q_target: q_target}
         _, loss_summary, loss, onehot, act, pred, target, q_act = self.sess.run([self.opt, self.loss_summary, self.loss, self.q_onehot, self.action, self.q_pred, self.q_target, self.q_action], feed_dict=feed_dict)
-        # _, loss_summary, loss, onehot, act, pred, target, q_act, new_tar  = self.sess.run([self.opt, self.loss_summary, self.loss, self.q_onehot, self.action, self.q_pred, self.q_target, self.q_action, self.new_target], feed_dict=feed_dict)
-        # print("Predicted: {}, Onehot: {}, Action: {}, Q-Act: {}, Target: {}, Loss: {}".format(pred, onehot, act, q_act, new_tar, loss))
         return loss_summary, loss
     
     def getFeatures(self, S):
@@ -138,7 +134,6 @@ class QNetwork(object):
     
     # Deep Q network for solving environments MountainCar and CartPole
     # Take in state information as an input, output q-value for each action
-
     def __init__(self, environment, sess, alpha=0.0001, filepath='tmp/deepq/', is_dueling=False):
         
         self.sess = sess
@@ -146,8 +141,6 @@ class QNetwork(object):
         self.nA = env.action_space.n
         self.nObs = (None,) + env.observation_space.shape
         self.filepath = filepath
-        
-        # tf.set_random_seed(9) # good for 30s
         
         with tf.name_scope("Input"):
             self.x = tf.placeholder(tf.float32, self.nObs, name='Features')
@@ -200,8 +193,6 @@ class QNetwork(object):
         action = action.flatten() # Actions must be in a 1d aray
         feed_dict = {self.x: features, self.action: action, self.q_target: q_target}
         _, loss_summary, loss, onehot, act, pred, target, q_act = self.sess.run([self.opt, self.loss_summary, self.loss, self.q_onehot, self.action, self.q_pred, self.q_target, self.q_action], feed_dict=feed_dict)
-        # _, loss_summary, loss, onehot, act, pred, target, q_act, new_tar  = self.sess.run([self.opt, self.loss_summary, self.loss, self.q_onehot, self.action, self.q_pred, self.q_target, self.q_action, self.new_target], feed_dict=feed_dict)
-        # print("Predicted: {}, Onehot: {}, Action: {}, Q-Act: {}, Target: {}, Loss: {}".format(pred, onehot, act, q_act, new_tar, loss))
         return loss_summary, loss
         
     def getFeatures(self, S):
@@ -214,7 +205,7 @@ class QNetwork(object):
         print("Saved Weights")
         
     def load_model(self, model_file):
-        # Helper function to load an existing model.
+        # If needed
         pass
 
     def load_model_weights(self, weight_file=''):
@@ -241,7 +232,6 @@ class QNetwork(object):
         self.writer = tf.summary.FileWriter(self.filepath+'events/', self.sess.graph)
         
         
-        
 class LinearQ(object):
     
     def __init__(self, environment, sess, alpha=0.0001, filepath='tmp/linearq/'):
@@ -254,8 +244,7 @@ class LinearQ(object):
         self.filepath = filepath
         
         # Set a random seed
-        tf.set_random_seed(2) # MountainCar No Replay
-        # tf.set_random_seed(7)
+        tf.set_random_seed(2) 
         
         # Linear network architecture
         with tf.name_scope("InputSpace"):
@@ -273,12 +262,7 @@ class LinearQ(object):
         with tf.name_scope("Optimize"):
             
             self.global_step = tf.Variable(0, trainable=False, name='global_step')
-            # self.opt = tf.train.GradientDescentOptimizer(alpha).minimize(self.loss, global_step=self.global_step)  #Change this to Adam later
-            train_opt = tf.train.AdamOptimizer(alpha)
-            grads = train_opt.compute_gradients(self.loss)
-            capped_grads = [(tf.clip_by_value(grad, -100., 100.), var) for grad, var in grads]
-            self.opt = train_opt.apply_gradients(capped_grads, global_step=self.global_step)
-            
+            self.opt = tf.train.GradientDescentOptimizer(alpha).minimize(self.loss, global_step=self.global_step)       
             # self.opt = tf.train.AdamOptimizer(alpha).minimize(self.loss, global_step=self.global_step)
 
         self.saver = tf.train.Saver(max_to_keep=20)
@@ -297,8 +281,6 @@ class LinearQ(object):
     def update(self, features, q_target, action=None):
         feed_dict = {self.x: features, self.q_target: q_target}
         _, summary, loss, w = self.sess.run([self.opt, self.loss_sum, self.loss, self.w], feed_dict=feed_dict)
-        # print(w)
-        # raw_input()
         return summary, loss
     
     def getFeatures(self, S):
@@ -348,7 +330,7 @@ class Replay_Memory(object):
 
     def __init__(self, memory_size=50000):
 
-        # The memory essentially stores transitions recorder from the agent
+        # The memory stores transitions from the agent
         # taking actions in the environment.
         self.memory = []
         self.memory_size = memory_size
@@ -426,7 +408,6 @@ class DQN_Agent(object):
     def train(self, episodes=1e3, epsilon=0.7, decay_rate=4.5e-6, replay=False, check_rate=1e4, memory_size=50000, burn_in=10000):
         # Interact with the environment and update the model parameters
         # If using experience replay then update the model with a sampled minibatch
-        
         if replay: # If using experience replay, need to burn in a set of transitions
             if self.linear:
                 memory_queue = Replay_Memory()
@@ -498,10 +479,7 @@ class DQN_Agent(object):
                     else:
                         best_q = self.net.infer(next_features)
                         best_q = np.max(best_q, axis=1, keepdims=True)
-                    
-                    # For atari:
-                    # Atari the evaluate is going to take in one feature and spit out a list of q_vals
-                                        
+                                                            
                     done_mask = 1 - dones.astype(int) # Makes a mask of 0 where done is true, 1 otherwise
                     q_target = self.gamma*best_q * done_mask + rewards # If done, target just reward, else target reward + best_q
                     
@@ -511,7 +489,6 @@ class DQN_Agent(object):
                         print("Loss exploded")
                         return
                     self.net.writer.add_summary(summary, tf.train.global_step(self.net.sess, self.net.global_step))
-                    # print(loss)
                     
                 S = S_next # Update the state info
                 if epsilon > 0.05: # Keep some exploration
@@ -519,7 +496,7 @@ class DQN_Agent(object):
                 
                 if iters % check_rate == 0:
                     # Test the model performance
-                    test_reward = self.test(episodes=20, epsilon=0.05) # Run a test to check the performance of the model
+                    test_reward,_ = self.test(episodes=20, epsilon=0.05) # Run a test to check the performance of the model
                     print('Reward: {}, Step: {}'.format(test_reward, tf.train.global_step(self.net.sess, self.net.global_step)))
                     reward_summary = tf.Summary(value=[tf.Summary.Value(tag='Test_Reward', simple_value=test_reward)])
                     self.net.writer.add_summary(reward_summary, tf.train.global_step(self.net.sess, self.net.global_step))
@@ -534,8 +511,9 @@ class DQN_Agent(object):
                 self.net.save_model_weights()
 
     def test(self, model_file=None, episodes=100, epsilon=0.0):
-        # Evaluate the performance of the agent over 100 episodes
+        # Evaluate the performance of the agent over episodes
         total_reward = 0
+        rewards = []
         for ep in range(int(episodes)):
             episode_reward = 0
             S = self.env.reset()
@@ -557,9 +535,10 @@ class DQN_Agent(object):
                     self.env.render()
                 S = S_next # Update the state
             total_reward += episode_reward
+            rewards.append(episode_reward)
         
         average_reward = float(total_reward/episodes)
-        return average_reward
+        return average_reward, rewards
     
     def burn_in_memory(self, memory_queue, burn_in=10000):
         # Initialize the replay memory with a burn_in number of episodes / transitions. 

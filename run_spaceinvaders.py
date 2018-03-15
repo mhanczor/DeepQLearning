@@ -1,12 +1,15 @@
 #!/usr/bin/env python
 import tensorflow as tf
 import gym
-from DQN_Implementation_GPU import DQN_Agent
+from DQN_Implementation import DQN_Agent
+import numpy as np
 
 # Setting the session to allow growth, so it doesn't allocate all GPU memory
-gpu_ops = tf.GPUOptions(allow_growth=True)
-config = tf.ConfigProto(log_device_placement=True, gpu_options=gpu_ops)
-sess = tf.Session(config=config)
+# gpu_ops = tf.GPUOptions(allow_growth=True)
+# config = tf.ConfigProto(log_device_placement=True, gpu_options=gpu_ops)
+# config = tf.ConfigProto(gpu_options=gpu_ops)
+# sess = tf.Session(config=config)
+sess = tf.Session()
 
 env = gym.make('SpaceInvaders-v0')
 episodes=5e3
@@ -16,7 +19,7 @@ gamma = 0.99
 alpha = 0.00025
 epsilon = 1.0 # started with 0.5
 network = 'DCNN' # Dueling Network
-filepath = 'tmp/spaceinvaders/run1'
+filepath = 'tmp/spaceinvaders/run4/'
 replay = True
 
 # Initialize agent
@@ -38,7 +41,18 @@ agent.train(episodes=episodes,
             burn_in=50000)
 agent.net.save_model_weights()
 
-# agent.render=True
-# agent.test(episodes=10,
-#             epsilon=0.05)
+agent.render=True
+agent.test(episodes=10,
+            epsilon=0.05)
+
+# Final testing
+agent.render = False
+total_reward, rewards = agent.test(episodes=100, epsilon=0.05)
+rewards = np.array(rewards)
+std_dev = np.std(rewards)
+mean = np.mean(rewards)
+print("Atari Mean: {}, StdDev: {}".format(mean, std_dev))
+
 agent.net.writer.close()
+agent.env.close()
+sess.close()
