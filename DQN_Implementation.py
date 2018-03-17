@@ -10,19 +10,24 @@ import random
 from PIL import Image
 
 
+import pdb
+
 class ConvQNetwork(object):
     
     # DeepQ Network for solving games with visual input like SpaceInvaders
-    def __init__(self, environment, sess, alpha=0.001, filepath='tmp/convq/', is_dueling=True):
+    def __init__(self, environment, sess, alpha=0.001, filepath='tmp/convq/', is_dueling=True, is_target=False):
         self.sess = sess
         env = environment
         self.nA = env.action_space.n
         self.nObs = (None,) + env.observation_space.shape
         self.filepath = filepath
+        self.is_target = is_target
         
         channels = 4
         self.image_size = [84, 84] # The image size to scale down to
         self.frame_buffer = np.zeros(([1] + self.image_size + [channels]), dtype=np.uint8)
+        
+        grad_norm = 10
         
         with tf.name_scope("Input"):
             input_size = [None] + self.image_size + [channels]
@@ -56,18 +61,34 @@ class ConvQNetwork(object):
                 self.loss_summary = tf.summary.scalar("Loss", self.loss)
             with tf.name_scope("Optimize"):
                 # Clip gradient norm to be leq 10
-                train_opt = tf.train.AdamOptimizer(alpha)
-                grads = train_opt.compute_gradients(self.loss)
-                capped_grads = [(tf.clip_by_norm(grad, [10]), var) for grad, var in grads]
                 self.global_step = tf.Variable(0, trainable=False, name='global_step')
-                self.opt = train_opt.apply_gradients(capped_grads, global_step=self.global_step)
+                train_opt = tf.train.AdamOptimizer(alpha)
+                # self.opt = tf.train.AdamOptimizer(alpha).minimize(self.loss, global_step=self.global_step)        
+                if grad_norm != None:
+                    grads_and_vars = train_opt.compute_gradients(self.loss)
+                    for idx, (grad, var) in enumerate(grads_and_vars):
+                      if grad is not None:
+                        grads_and_vars[idx] = (tf.clip_by_norm(grad, grad_norm), var)
+                    self.opt = train_opt.apply_gradients(grads_and_vars, global_step=self.global_step)
+                else:
+                    self.opt = train_opt.minimize(self.loss, global_step=self.global_step)
+                
+                # train_opt = tf.train.AdamOptimizer(alpha)
+                # grads = train_opt.compute_gradients(self.loss)
+                # tf.clip_by_global_norm()
+                # 
+                # capped_grads = [(tf.clip_by_norm(grad, [10]), var) for grad, var in grads]
+                # self.opt = train_opt.apply_gradients(capped_grads, global_step=self.global_step)
                             
-            self.saver = tf.train.Saver(max_to_keep=15)
             self._reset()
         
     def _reset(self):
         self.sess.run(tf.global_variables_initializer())
-        self.writer = tf.summary.FileWriter(self.filepath+'events/', self.sess.graph)
+        if not self.is_target:
+            self.saver = tf.train.Saver(max_to_keep=15)
+            self.writer = tf.summary.FileWriter(self.filepath+'events/', self.sess.graph)
+        else:
+            pass
     
     def infer(self, features):
         # Evaluate the data using the model
@@ -79,8 +100,17 @@ class ConvQNetwork(object):
         # Update the model by calculating the loss over a selected action
         action = action.flatten() # Actions must be in a 1d aray
         feed_dict = {self.x: features, self.action: action, self.q_target: q_target}
-        _, loss_summary, loss, onehot, act, pred, target, q_act = self.sess.run([self.opt, self.loss_summary, self.loss, self.q_onehot, self.action, self.q_pred, self.q_target, self.q_action], feed_dict=feed_dict)
+        _, loss_summary, loss, pred, target, q_act = self.sess.run([self.opt, self.loss_summary, self.loss, self.q_pred, self.q_target, self.q_action], feed_dict=feed_dict)
         return loss_summary, loss
+        
+    def targetGraphUpdate(self):
+        # As of now just straight copying the current to the target, can add some rate later if needed
+        variables = tf.trainable_variables()
+        net_vars = len(variables) // 2 # Since we have two graphs we just want the first graph vars to update the second
+        ops = []
+        for idx, var in enumerate(variables[:net_vars]):
+            value_op = variables[idx+net_vars].assign(value=var.value())
+        print('Updated Target Network')
     
     def getFeatures(self, S):
         # Need to convert raw image input into 4 stacked frames
@@ -134,53 +164,73 @@ class QNetwork(object):
     
     # Deep Q network for solving environments MountainCar and CartPole
     # Take in state information as an input, output q-value for each action
-    def __init__(self, environment, sess, alpha=0.0001, filepath='tmp/deepq/', is_dueling=False):
+    def __init__(self, environment, sess, alpha=0.0001, filepath='tmp/deepq/', is_dueling=False, is_target=False):
         
         self.sess = sess
         env = environment
         self.nA = env.action_space.n
         self.nObs = (None,) + env.observation_space.shape
         self.filepath = filepath
+        self.is_target = is_target
+        # tf.set_random_seed(2)
         
         with tf.name_scope("Input"):
             self.x = tf.placeholder(tf.float32, self.nObs, name='Features')
             self.q_target = tf.placeholder(tf.float32, [None, 1], name='Q_Target')
             self.action = tf.placeholder(tf.int32, [None], name='Selected_Action')
         with tf.name_scope("Layers"):
-            fc_1 = tf.layers.dense(inputs=self.x, units=30, activation=tf.nn.relu)
-            fc_2 = tf.layers.dense(inputs=fc_1, units=30, activation=tf.nn.relu)
-            fc_3 = tf.layers.dense(inputs=fc_2, units=30, activation=tf.nn.relu)
+            fc_1 = tf.layers.dense(inputs=self.x, units=32, activation=tf.nn.relu)
+            fc_2 = tf.layers.dense(inputs=fc_1, units=32, activation=tf.nn.relu)
         with tf.name_scope("Output"):
             
             if is_dueling:
                 # Dueling DQN
-                advantage = tf.layers.dense(inputs=fc_3, units=self.nA)
-                self.advantage = tf.subtract(advantage, tf.reduce_mean(advantage))
-                value = tf.layers.dense(inputs=fc_3, units=1)
+                advantage_dense = tf.layers.dense(inputs=fc_2, units=16, activation=tf.nn.relu)
+                advantage_stream =tf.layers.dense(inputs=advantage_dense, units=self.nA)
+                self.advantage = tf.subtract(advantage_stream, tf.reduce_mean(advantage_stream))
+                value_dense = tf.layers.dense(inputs=fc_2, units=16, activation=tf.nn.relu)
+                value = tf.layers.dense(inputs=value_dense, units=1)
                 self.q_pred = tf.add(value, self.advantage)
                 self.q_onehot = tf.one_hot(self.action, self.nA, axis=-1)
                 self.q_action = tf.reduce_sum(tf.multiply(self.q_onehot, self.q_pred), 1, keepdims=True)
             else:
                 # Vanilla DQN
+                fc_3 = tf.layers.dense(inputs=fc_2, units=32, activation=tf.nn.relu)
                 self.q_pred = tf.layers.dense(inputs=fc_3, units=self.nA)
                 self.q_onehot = tf.one_hot(self.action, self.nA, axis=-1)
                 self.q_action = tf.reduce_sum(tf.multiply(self.q_onehot, self.q_pred), 1, keepdims=True) # Qval for the chosen action, should have a dimension (None, 1)
                 
         with tf.name_scope("Loss"):
-            regularizer = 0.1*(tf.nn.l2_loss(fc_1) + tf.nn.l2_loss(fc_2) + tf.nn.l2_loss(fc_3))
-            self.loss = tf.losses.mean_squared_error(self.q_target, self.q_action)
-            # self.loss = tf.reduce_mean(tf.losses.huber_loss(self.q_target, self.q_action, delta=2000))
+            if is_dueling:
+                regularizer = 0.01*(tf.nn.l2_loss(fc_1) + tf.nn.l2_loss(fc_2) + tf.nn.l2_loss(advantage_dense) + tf.nn.l2_loss(value_dense))
+            else:
+                regularizer = 0.01*(tf.nn.l2_loss(fc_1) + tf.nn.l2_loss(fc_2) + tf.nn.l2_loss(fc_3))
+            self.loss = tf.losses.mean_squared_error(self.q_target, self.q_action) #+ regularizer
+            # self.loss = tf.reduce_mean(tf.losses.huber_loss(self.q_target, self.q_action, delta=2000)) + regularizer
             self.loss_summary = tf.summary.scalar("Loss", self.loss)
         with tf.name_scope("Optimize"):
             self.global_step = tf.Variable(0, trainable=False, name='global_step')
-            self.opt = tf.train.AdamOptimizer(alpha).minimize(self.loss, global_step=self.global_step)
-        
-        self.saver = tf.train.Saver(max_to_keep=10)
+            # self.opt = tf.train.AdamOptimizer(alpha).minimize(self.loss, global_step=self.global_step)
+            train_opt = tf.train.AdamOptimizer(alpha)
+            grad_norm = 10
+            if grad_norm != None:
+                grads_and_vars = train_opt.compute_gradients(self.loss)
+                for idx, (grad, var) in enumerate(grads_and_vars):
+                  if grad is not None:
+                    grads_and_vars[idx] = (tf.clip_by_norm(grad, grad_norm), var)
+                self.opt = train_opt.apply_gradients(grads_and_vars, global_step=self.global_step)
+            else:
+                self.opt = train_opt.minimize(self.loss, global_step=self.global_step)
+                
         self._reset()
     
     def _reset(self):
         self.sess.run(tf.global_variables_initializer())
-        self.writer = tf.summary.FileWriter(self.filepath+'events/', self.sess.graph)
+        if not self.is_target:
+            self.saver = tf.train.Saver(max_to_keep=10)
+            self.writer = tf.summary.FileWriter(self.filepath+'events/', self.sess.graph)
+        else:
+            pass
         
     def infer(self, features):
         # Evaluate the data using the model
@@ -190,10 +240,21 @@ class QNetwork(object):
         
     def update(self, features, q_target, action=None):
         # Update the model by calculating the loss over a selected action
+        # import pdb; pdb.set_trace()
         action = action.flatten() # Actions must be in a 1d aray
         feed_dict = {self.x: features, self.action: action, self.q_target: q_target}
         _, loss_summary, loss, onehot, act, pred, target, q_act = self.sess.run([self.opt, self.loss_summary, self.loss, self.q_onehot, self.action, self.q_pred, self.q_target, self.q_action], feed_dict=feed_dict)
         return loss_summary, loss
+    
+    def targetGraphUpdate(self):
+        # As of now just straight copying the current to the target, can add some rate later if needed
+        variables = tf.trainable_variables()
+        net_vars = len(variables) // 2 # Since we have two graphs we just want the first graph vars to update the second
+        ops = []
+        for idx, var in enumerate(variables[:net_vars]):
+            value_op = variables[idx+net_vars].assign(value=var.value())
+            self.sess.run(value_op)
+        print('Updated Target Network')
         
     def getFeatures(self, S):
         # Used here to make agent compatible with multiple state information types
@@ -383,12 +444,13 @@ class Replay_Memory(object):
 
 class DQN_Agent(object):
     
-    def __init__(self, environment, sess, network_type, render=False, gamma=1., alpha=0.001, filepath='tmp/'):
+    def __init__(self, environment, sess, network_type, render=False, gamma=1., alpha=0.001, filepath='tmp/', double=False):
 
         self.env = environment
         self.nA = self.env.action_space.n
         self.render = render
         self.gamma = gamma
+        self.is_double = False
                 
         if network_type == 'Linear':
             self.net = LinearQ(environment, sess=sess, filepath=filepath, alpha=alpha)
@@ -398,6 +460,9 @@ class DQN_Agent(object):
             self.linear = False
         elif network_type == 'DDNN':
             self.net = QNetwork(environment, sess=sess, filepath=filepath, alpha=alpha, is_dueling=True)
+            if double == True:
+                self.target_net = QNetwork(environment, sess=sess, filepath=filepath, alpha=alpha, is_dueling=True, is_target=True)
+                self.is_double = True
             self.linear = False
         elif network_type == 'DCNN':
             self.net = ConvQNetwork(environment, sess=sess, filepath=filepath, alpha=alpha)
@@ -411,7 +476,7 @@ class DQN_Agent(object):
         if replay: # If using experience replay, need to burn in a set of transitions
             if self.linear:
                 memory_queue = Replay_Memory()
-                self.burn_in_memory(memory_queue, burn_in=100)
+                self.burn_in_memory(memory_queue, burn_in=10000)
                 batch_size = 32
                 print('Memory Burned In')
             else:
@@ -419,11 +484,12 @@ class DQN_Agent(object):
                 self.burn_in_memory(memory_queue, burn_in=burn_in)
                 batch_size = 32
                 print('Memory Burned In')
-            
+                
         iters = 0
         test_reward = 0
         reward_summary = tf.Summary()
         ep_reward_summary = tf.Summary()
+        # pdb.set_trace()
         for ep in range(int(episodes)):
             ep_reward = 0
             S = self.env.reset()
@@ -431,6 +497,7 @@ class DQN_Agent(object):
                 for i in range(4):
                     features = self.net.getFeatures(S) # Fill the Atari buffer with frames
             done = False
+            partial_episode=False
             while not done:
                 features = self.net.getFeatures(S)
                 # Epsilon greedy training policy
@@ -447,12 +514,19 @@ class DQN_Agent(object):
                         q_target = np.array([[R]])
                     else:
                         feature_next = self.net.getFeatures(S_next)
-                        q_vals_next = self.net.infer(feature_next)
-                        q_target = np.array([[self.gamma*np.max(q_vals_next) + R]])
+                        if self.is_double:
+                            act_2 = np.argmax(self.net.infer(feature_next)) # Need to evaluate the greedy policy based on the current net, not the target
+                            q_vals_next = self.target_net.infer(feature_next)
+                            q_target = np.array([self.gamma*q_vals_next[:,act_2] + R])
+                        else:
+                            q_vals_next = self.net.infer(feature_next)
+                            q_target = np.array([[self.gamma*np.max(q_vals_next) + R]])
                         
                     if self.linear:
                         features = features[None,action,:]
+                    
                     summary, loss = self.net.update(features, q_target, action=np.array([[action]])) 
+                    
                     if np.isnan(loss):
                         print("Loss exploded")
                         return          
@@ -477,8 +551,15 @@ class DQN_Agent(object):
                         for i, ele in enumerate(next_features):
                             best_q[i,:] = np.max(self.net.infer(ele))
                     else:
-                        best_q = self.net.infer(next_features)
-                        best_q = np.max(best_q, axis=1, keepdims=True)
+                        if self.is_double:
+                            act_2 = np.argmax(self.net.infer(next_features), axis=1) # Need to evaluate the greedy policy based on the current net, not the target
+                            q_vals_next = self.target_net.infer(next_features)
+                            act_index = [np.arange(act_2.shape[0]), act_2, None]
+                            # import pdb; pdb.set_trace()
+                            best_q = q_vals_next[act_index]
+                        else:
+                            best_q = self.net.infer(next_features)
+                            best_q = np.max(best_q, axis=1, keepdims=True)
                                                             
                     done_mask = 1 - dones.astype(int) # Makes a mask of 0 where done is true, 1 otherwise
                     q_target = self.gamma*best_q * done_mask + rewards # If done, target just reward, else target reward + best_q
@@ -500,15 +581,21 @@ class DQN_Agent(object):
                     print('Reward: {}, Step: {}'.format(test_reward, tf.train.global_step(self.net.sess, self.net.global_step)))
                     reward_summary = tf.Summary(value=[tf.Summary.Value(tag='Test_Reward', simple_value=test_reward)])
                     self.net.writer.add_summary(reward_summary, tf.train.global_step(self.net.sess, self.net.global_step))
+                    if self.is_double and iters != 0:
+                        self.target_net.targetGraphUpdate() # Update the weights of the target graph
                     done = True
+                    partial_episode = True
                 iters += 1
             
-            ep_reward_summary = tf.Summary(value=[tf.Summary.Value(tag='Episode_Reward', simple_value=ep_reward)])
-            self.net.writer.add_summary(ep_reward_summary, tf.train.global_step(self.net.sess, self.net.global_step))
+            if not partial_episode:
+                ep_reward_summary = tf.Summary(value=[tf.Summary.Value(tag='Episode_Reward', simple_value=ep_reward)])
+                self.net.writer.add_summary(ep_reward_summary, tf.train.global_step(self.net.sess, self.net.global_step))
             if ep % 100 == 0:
                 print("episode {} complete, epsilon={}".format(ep, epsilon))
             if ep % 1000 == 0  and ep != 0:
                 self.net.save_model_weights()
+                # if self.is_double and iters != 0:
+                #     self.target_net.targetGraphUpdate() # Update the weights of the target graph
 
     def test(self, model_file=None, episodes=100, epsilon=0.0):
         # Evaluate the performance of the agent over episodes

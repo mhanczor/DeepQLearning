@@ -11,14 +11,14 @@ config = tf.ConfigProto(gpu_options=gpu_ops)
 sess = tf.Session(config=config)
 
 env = gym.make('CartPole-v0')
-episodes=5e3
+episodes=1e4
 epsilon=0.8
 
 # DeepQ Network
 gamma = 0.99
 alpha = 0.0001
 network = 'DDNN' # Deep network, not dueling
-filepath = 'tmp/dueling-q/cartpole/'
+filepath = 'tmp/cartpole/run9/'
 replay = True 
 
 # Initialize agent
@@ -27,17 +27,19 @@ agent = DQN_Agent(environment=env,
                     network_type=network,
                     gamma=gamma,
                     filepath=filepath,
-                    alpha=alpha)
+                    alpha=alpha,
+                    double=True)
 agent.net.load_model_weights()
 
 # Train the network
 agent.train(episodes=episodes,
             epsilon=epsilon,
-            replay=replay)
+            replay=replay,
+            check_rate=5e3)
 agent.net.save_model_weights()
 
 agent.render=True
-agent.test(episodes=100,
+agent.test(episodes=10,
             epsilon=0.00)
 
 # Final testing

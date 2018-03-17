@@ -14,21 +14,22 @@ episodes=5e3
 decay_rate=1e-6
 
 # Dueling DeepQ Network
-gamma = 1.0
-alpha = 0.00001 # started with 0.0001
-epsilon = 0.3 # started with 0.5
+gamma = 0.99
+alpha = 0.0001 # started with 0.0001
+epsilon = 0.5 # started with 0.5
 network = 'DDNN' # Dueling Network
-filepath = 'tmp/dueling-q/mountaincar/' #'tmp/linearq_replay/cartpole/'
+filepath = 'tmp/mountaincar/run2/' #'tmp/linearq_replay/cartpole/'
 replay = True
 
 # Initialize agent
 agent = DQN_Agent(environment=env, 
-                    sess=sess, 
+                    sess=sess,
                     network_type=network,
                     gamma=gamma,
                     filepath=filepath,
-                    alpha=alpha)
-agent.net.load_model_weights('model.ckpt-200001')
+                    alpha=alpha,
+                    double=True)
+# agent.net.load_model_weights()
 
 # Train the network
 agent.train(episodes=episodes,
