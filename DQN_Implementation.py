@@ -530,7 +530,8 @@ class DQN_Agent(object):
                         
                     if self.linear:
                         features = features[None,action,:]
-                    
+                        
+                    avg_episode_q += np.max(q_vals_next)
                     summary, loss = self.net.update(features, q_target, action=np.array([[action]])) 
                     
                     if np.isnan(loss):
