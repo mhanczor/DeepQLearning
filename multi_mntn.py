@@ -22,14 +22,14 @@ for i in range (100):
         
     with tf.Session() as sess:
         # Initialize agent
-        tf.set_random_seed(i)
+        tf.set_random_seed(2)
         agent = DQN_Agent(environment=env, 
                             sess=sess, 
                             network_type=network,
                             gamma=gamma,
                             filepath=filepath,
                             alpha=alpha,
-                            double=True)
+                            double=False)
 
         # Train the network
         agent.train(episodes=episodes,

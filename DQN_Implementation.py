@@ -205,7 +205,8 @@ class QNetwork(object):
                 regularizer = 0.01*(tf.nn.l2_loss(fc_1) + tf.nn.l2_loss(fc_2) + tf.nn.l2_loss(advantage_dense) + tf.nn.l2_loss(value_dense))
             else:
                 regularizer = 0.01*(tf.nn.l2_loss(fc_1) + tf.nn.l2_loss(fc_2) + tf.nn.l2_loss(fc_3))
-            self.loss = tf.losses.mean_squared_error(self.q_target, self.q_action) #+ regularizer
+            # self.loss = tf.losses.mean_squared_error(self.q_target, self.q_action) #+ regularizer
+            self.loss = tf.losses.huber_loss(self.q_target, self.q_action)
             # self.loss = tf.reduce_mean(tf.losses.huber_loss(self.q_target, self.q_action, delta=2000)) + regularizer
             self.loss_summary = tf.summary.scalar("Loss", self.loss)
         with tf.name_scope("Optimize"):
@@ -484,14 +485,19 @@ class DQN_Agent(object):
                 self.burn_in_memory(memory_queue, burn_in=burn_in)
                 batch_size = 32
                 print('Memory Burned In')
+        else:
+            batch_size = 1
                 
         iters = 0
         test_reward = 0
         reward_summary = tf.Summary()
         ep_reward_summary = tf.Summary()
+        avg_action_q_pred = tf.Summary()
         # pdb.set_trace()
         for ep in range(int(episodes)):
             ep_reward = 0
+            ep_iters = 0
+            avg_episode_q = 0
             S = self.env.reset()
             if not self.linear:
                 for i in range(4):
@@ -560,7 +566,7 @@ class DQN_Agent(object):
                         else:
                             best_q = self.net.infer(next_features)
                             best_q = np.max(best_q, axis=1, keepdims=True)
-                                                            
+                    avg_episode_q += np.sum(best_q)                                        
                     done_mask = 1 - dones.astype(int) # Makes a mask of 0 where done is true, 1 otherwise
                     q_target = self.gamma*best_q * done_mask + rewards # If done, target just reward, else target reward + best_q
                     
@@ -586,10 +592,14 @@ class DQN_Agent(object):
                     done = True
                     partial_episode = True
                 iters += 1
+                ep_iters += 1
             
             if not partial_episode:
                 ep_reward_summary = tf.Summary(value=[tf.Summary.Value(tag='Episode_Reward', simple_value=ep_reward)])
                 self.net.writer.add_summary(ep_reward_summary, tf.train.global_step(self.net.sess, self.net.global_step))
+                avg_episode_q = avg_episode_q / (batch_size*ep_iters)
+                avg_action_q_pred  = tf.Summary(value=[tf.Summary.Value(tag='Episode_Avg_Q', simple_value=avg_episode_q)])
+                self.net.writer.add_summary(avg_action_q_pred, tf.train.global_step(self.net.sess, self.net.global_step))
             if ep % 100 == 0:
                 print("episode {} complete, epsilon={}".format(ep, epsilon))
             if ep % 1000 == 0  and ep != 0:
