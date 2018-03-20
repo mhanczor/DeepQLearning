@@ -470,6 +470,9 @@ class DQN_Agent(object):
             self.linear = False
         elif network_type == 'DCNN':
             self.net = ConvQNetwork(environment, sess=sess, filepath=filepath, alpha=alpha)
+            if double == True:
+                self.target_net = ConvQNetwork(environment, sess=sess, filepath=filepath, alpha=alpha, is_target=True)
+                self.is_double = True
             self.linear = False
         else:
             raise ValueError

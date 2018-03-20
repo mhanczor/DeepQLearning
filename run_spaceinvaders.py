@@ -19,7 +19,7 @@ gamma = 0.99
 alpha = 0.00025
 epsilon = 1.0 # started with 0.5
 network = 'DCNN' # Dueling Network
-filepath = 'tmp/spaceinvaders/run4/'
+filepath = 'tmp/spaceinvaders/run1/'
 replay = True
 double = True
 
@@ -31,7 +31,7 @@ agent = DQN_Agent(environment=env,
                     filepath=filepath,
                     alpha=alpha,
                     double=double)
-agent.net.load_model_weights()
+# agent.net.load_model_weights()
 
 # Train the network
 agent.train(episodes=episodes,
