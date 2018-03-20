@@ -56,14 +56,21 @@ class ConvQNetwork(object):
                 self.q_pred = tf.layers.dense(inputs=fc_1, units=self.nA)
                 self.q_onehot = tf.one_hot(self.action, self.nA, axis=-1)
                 self.q_action = tf.reduce_sum(tf.multiply(self.q_onehot, self.q_pred), 1, keepdims=True) # Qval for the chosen action, should have a dimension (None, 1)
-            with tf.name_scope("Loss"):
-                self.loss = tf.losses.mean_squared_error(self.q_target, self.q_action)
+            with tf.name_scope("Loss"):        
+                if is_dueling:
+                    regularizer = 0.01*(tf.nn.l2_loss(fc_1) + tf.nn.l2_loss(fc_2) + tf.nn.l2_loss(advantage_dense) + tf.nn.l2_loss(value_dense))
+                else:
+                    regularizer = 0.01*(tf.nn.l2_loss(fc_1) + tf.nn.l2_loss(fc_2) + tf.nn.l2_loss(fc_3))
+                # self.loss = tf.losses.mean_squared_error(self.q_target, self.q_action) #+ regularizer
+                self.loss = tf.losses.huber_loss(self.q_target, self.q_action) + regularizer
+                # self.loss = tf.reduce_mean(tf.losses.huber_loss(self.q_target, self.q_action, delta=2000)) + regularizer
                 self.loss_summary = tf.summary.scalar("Loss", self.loss)
             with tf.name_scope("Optimize"):
                 # Clip gradient norm to be leq 10
                 self.global_step = tf.Variable(0, trainable=False, name='global_step')
                 train_opt = tf.train.AdamOptimizer(alpha)
-                # self.opt = tf.train.AdamOptimizer(alpha).minimize(self.loss, global_step=self.global_step)        
+                # self.opt = tf.train.AdamOptimizer(alpha).minimize(self.loss, global_step=self.global_step) 
+                grad_norm = 10       
                 if grad_norm != None:
                     grads_and_vars = train_opt.compute_gradients(self.loss)
                     for idx, (grad, var) in enumerate(grads_and_vars):
@@ -72,20 +79,13 @@ class ConvQNetwork(object):
                     self.opt = train_opt.apply_gradients(grads_and_vars, global_step=self.global_step)
                 else:
                     self.opt = train_opt.minimize(self.loss, global_step=self.global_step)
-                
-                # train_opt = tf.train.AdamOptimizer(alpha)
-                # grads = train_opt.compute_gradients(self.loss)
-                # tf.clip_by_global_norm()
-                # 
-                # capped_grads = [(tf.clip_by_norm(grad, [10]), var) for grad, var in grads]
-                # self.opt = train_opt.apply_gradients(capped_grads, global_step=self.global_step)
                             
             self._reset()
         
     def _reset(self):
         self.sess.run(tf.global_variables_initializer())
         if not self.is_target:
-            self.saver = tf.train.Saver(max_to_keep=15)
+            self.saver = tf.train.Saver(max_to_keep=20)
             self.writer = tf.summary.FileWriter(self.filepath+'events/', self.sess.graph)
         else:
             pass
@@ -206,7 +206,7 @@ class QNetwork(object):
             else:
                 regularizer = 0.01*(tf.nn.l2_loss(fc_1) + tf.nn.l2_loss(fc_2) + tf.nn.l2_loss(fc_3))
             # self.loss = tf.losses.mean_squared_error(self.q_target, self.q_action) #+ regularizer
-            self.loss = tf.losses.huber_loss(self.q_target, self.q_action)
+            self.loss = tf.losses.huber_loss(self.q_target, self.q_action) + regularizer
             # self.loss = tf.reduce_mean(tf.losses.huber_loss(self.q_target, self.q_action, delta=2000)) + regularizer
             self.loss_summary = tf.summary.scalar("Loss", self.loss)
         with tf.name_scope("Optimize"):
