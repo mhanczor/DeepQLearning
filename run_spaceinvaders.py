@@ -10,9 +10,10 @@ config = tf.ConfigProto(log_device_placement=True, gpu_options=gpu_ops)
 config = tf.ConfigProto(gpu_options=gpu_ops)
 sess = tf.Session(config=config)
 
-env = gym.make('SpaceInvaders-v0')
-episodes=5e3
-decay_rate=9e-7
+# env = gym.make('SpaceInvaders-v0')
+env = gym.make('SpaceInvadersDeterministic-v0')
+episodes = 5e3
+decay_rate = 9e-7
 
 gamma = 0.99
 alpha = 0.00025
@@ -20,6 +21,7 @@ epsilon = 1.0 # started with 0.5
 network = 'DCNN' # Dueling Network
 filepath = 'tmp/spaceinvaders/run4/'
 replay = True
+double = True
 
 # Initialize agent
 agent = DQN_Agent(environment=env, 
@@ -27,7 +29,8 @@ agent = DQN_Agent(environment=env,
                     network_type=network,
                     gamma=gamma,
                     filepath=filepath,
-                    alpha=alpha)
+                    alpha=alpha,
+                    double=double)
 agent.net.load_model_weights()
 
 # Train the network
@@ -35,14 +38,14 @@ agent.train(episodes=episodes,
             epsilon=epsilon,
             decay_rate=decay_rate,
             replay=replay,
-            check_rate=5e4,
+            check_rate=1e4,
             memory_size=500000,
             burn_in=50000)
 agent.net.save_model_weights()
 
-agent.render=True
-agent.test(episodes=10,
-            epsilon=0.05)
+# agent.render=True
+# agent.test(episodes=10,
+#             epsilon=0.05)
 
 # Final testing
 agent.render = False

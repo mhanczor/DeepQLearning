@@ -45,22 +45,25 @@ class ConvQNetwork(object):
         with tf.name_scope("Output"):
             if is_dueling:
                 # Dueling DQN
-                advantage = tf.layers.dense(inputs=fc_1, units=self.nA)
+                advantage_dense = tf.layers.dense(inputs=fc_1, units=512, activation=tf.nn.relu)
+                advantage = tf.layers.dense(inputs=advantage_dense, units=self.nA)
                 self.advantage = tf.subtract(advantage, tf.reduce_mean(advantage))
-                value = tf.layers.dense(inputs=fc_1, units=1)
+                value_dense = tf.layers.dense(inputs=fc_1, units=512, activation=tf.nn.relu)
+                value = tf.layers.dense(inputs=value_dense, units=1)
                 self.q_pred = tf.add(value, self.advantage)
                 self.q_onehot = tf.one_hot(self.action, self.nA, axis=-1)
                 self.q_action = tf.reduce_sum(tf.multiply(self.q_onehot, self.q_pred), 1, keepdims=True)
             else:
                 # Vanilla DQN
-                self.q_pred = tf.layers.dense(inputs=fc_1, units=self.nA)
+                fc_2 = tf.layers.dense(inputs=fc_1, units=1024, activation=tf.nn.relu)
+                self.q_pred = tf.layers.dense(inputs=fc_2, units=self.nA)
                 self.q_onehot = tf.one_hot(self.action, self.nA, axis=-1)
                 self.q_action = tf.reduce_sum(tf.multiply(self.q_onehot, self.q_pred), 1, keepdims=True) # Qval for the chosen action, should have a dimension (None, 1)
             with tf.name_scope("Loss"):        
                 if is_dueling:
-                    regularizer = 0.01*(tf.nn.l2_loss(fc_1) + tf.nn.l2_loss(fc_2) + tf.nn.l2_loss(advantage_dense) + tf.nn.l2_loss(value_dense))
+                    regularizer = 0.01*(tf.nn.l2_loss(cnv_1) + tf.nn.l2_loss(cnv_2) + tf.nn.l2_loss(cnv_3) + tf.nn.l2_loss(fc_1) + tf.nn.l2_loss(advantage_dense) + tf.nn.l2_loss(value_dense))
                 else:
-                    regularizer = 0.01*(tf.nn.l2_loss(fc_1) + tf.nn.l2_loss(fc_2) + tf.nn.l2_loss(fc_3))
+                    regularizer = 0.01*(tf.nn.l2_loss(cnv_1) + tf.nn.l2_loss(cnv_2) + tf.nn.l2_loss(cnv_3) + tf.nn.l2_loss(fc_1) + tf.nn.l2_loss(fc_2))
                 # self.loss = tf.losses.mean_squared_error(self.q_target, self.q_action) #+ regularizer
                 self.loss = tf.losses.huber_loss(self.q_target, self.q_action) + regularizer
                 # self.loss = tf.reduce_mean(tf.losses.huber_loss(self.q_target, self.q_action, delta=2000)) + regularizer
@@ -585,7 +588,7 @@ class DQN_Agent(object):
                 
                 if iters % check_rate == 0:
                     # Test the model performance
-                    test_reward,_ = self.test(episodes=20, epsilon=0.05) # Run a test to check the performance of the model
+                    test_reward,_ = self.test(episodes=5, epsilon=0.05) # Run a test to check the performance of the model
                     print('Reward: {}, Step: {}'.format(test_reward, tf.train.global_step(self.net.sess, self.net.global_step)))
                     reward_summary = tf.Summary(value=[tf.Summary.Value(tag='Test_Reward', simple_value=test_reward)])
                     self.net.writer.add_summary(reward_summary, tf.train.global_step(self.net.sess, self.net.global_step))
