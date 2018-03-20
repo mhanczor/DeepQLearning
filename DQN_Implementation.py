@@ -408,7 +408,7 @@ class Replay_Memory(object):
         batch_features = (batch_size,) + self.feature_shape[1:]
         cur_features = np.zeros(batch_features)
         actions = np.zeros((batch_size, 1), dtype=np.uint8)
-        rewards = np.zeros((batch_size, 1), dtype=np.uint8)
+        rewards = np.zeros((batch_size, 1), dtype=np.int32)
         dones = np.zeros((batch_size, 1), dtype=np.bool)
         if is_linear:
             next_features = []
@@ -532,6 +532,7 @@ class DQN_Agent(object):
                         features = features[None,action,:]
                         
                     avg_episode_q += np.max(q_vals_next)
+                    pdb.set_trace()
                     summary, loss = self.net.update(features, q_target, action=np.array([[action]])) 
                     
                     if np.isnan(loss):
