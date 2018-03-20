@@ -1,5 +1,5 @@
 # DeepQLearning
-Using Deep-Q Learning to solve openAI environments
+Using Deep Q-Learning to solve openAI environments
 
 This work was for a project for my 10-703 Deep Reinforcement Learning course.
 
